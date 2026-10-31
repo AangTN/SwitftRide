@@ -4,6 +4,8 @@ services:
     environment:
       MSSQL_MEMORY_LIMIT_MB: "1536"
   mongo:
+    # Fresh VPS database: MongoDB 8 cannot start on this Ubuntu kernel.
+    image: mongo:7.0.45
     command: [mongod, --wiredTigerCacheSizeGB, "0.25"]
   auth:
     image: ${REGISTRY_PREFIX}/auth:${DEPLOY_TAG}

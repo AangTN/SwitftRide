@@ -9,6 +9,11 @@ app at `/driver/`, and `/api/` is forwarded to Gateway. Gateway trusts only Ngin
 Docker address for forwarded headers; API services trust Gateway. Database and
 direct API ports remain bound to the VPS loopback interface.
 
+The VPS override uses MongoDB 7.0.45 for compatibility with the host's Ubuntu
+kernel (see [MongoDB SERVER-136848](https://jira.mongodb.org/browse/SERVER-136848)).
+Initialize it with a fresh volume; do not attach an existing MongoDB 8 data volume
+to MongoDB 7. SQL Server's memory limit is 1536 MB; MongoDB's cache is 256 MB.
+
 ## Server preparation
 
 Use Ubuntu with Docker Engine, Docker Compose v2, OpenSSL and curl. Give the deploy
