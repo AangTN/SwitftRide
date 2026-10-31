@@ -1,0 +1,103 @@
+name: CI and deploy demo
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: deploy-demo
+  cancel-in-progress: false
+
+jobs:
+  backend:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+      - run: dotnet test SwiftRide.sln -c Release
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Build and push backend images
+        shell: bash
+        run: |
+          set -euo pipefail
+          registry="ghcr.io/${GITHUB_REPOSITORY,,}"
+          for item in 'auth:AuthService/Api/SwiftRide.Auth.Api.csproj' 'trip:TripService/Api/SwiftRide.Trip.Api.csproj' 'matching:MatchingService/Api/SwiftRide.Matching.Api.csproj' 'payment:PaymentService/Api/SwiftRide.Payment.Api.csproj' 'gateway:ApiGateway/SwiftRide.ApiGateway.csproj'; do
+            service="${item%%:*}"
+            project="${item#*:}"
+            docker buildx build --push --build-arg "PROJECT=src/$project" --tag "$registry/$service:$GITHUB_SHA" --cache-from "type=gha,scope=$service" --cache-to "type=gha,mode=max,scope=$service" .
+          done
+  web:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+      - name: Check and build both apps
+        working-directory: apps/mobile
+        run: |
+          flutter pub get
+          flutter analyze
+          flutter test
+          flutter build web --target lib/main_rider.dart --output build/web-rider --no-web-resources-cdn
+          flutter build web --target lib/main_driver.dart --output build/web-driver --base-href /driver/ --no-web-resources-cdn
+          cp ../../deploy/nginx/nginx.conf.template nginx.conf.template
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Build and push web image
+        run: |
+          registry="ghcr.io/${GITHUB_REPOSITORY,,}"
+          docker buildx build --push --file deploy/nginx/Dockerfile --tag "$registry/web:$GITHUB_SHA" apps/mobile
+  deploy:
+    needs: [backend, web]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: read
+    steps:
+      - uses: actions/checkout@v4
+      - name: Prepare SSH
+        env:
+          SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
+          KNOWN_HOSTS: ${{ secrets.DEPLOY_KNOWN_HOSTS }}
+        run: |
+          install -m 700 -d ~/.ssh
+          printf '%s\n' "$SSH_KEY" > ~/.ssh/id_ed25519
+          chmod 600 ~/.ssh/id_ed25519
+          printf '%s\n' "$KNOWN_HOSTS" > ~/.ssh/known_hosts
+      - name: Copy deployment files
+        env:
+          HOST: ${{ secrets.DEPLOY_HOST }}
+        run: |
+          tar czf /tmp/swiftride-deploy.tgz compose.yml compose.deploy.yml deploy
+          scp /tmp/swiftride-deploy.tgz "ubuntu@$HOST:/opt/swiftride/deploy.tgz"
+          ssh "ubuntu@$HOST" 'cd /opt/swiftride && tar xzf deploy.tgz && rm deploy.tgz'
+      - name: Deploy images
+        env:
+          HOST: ${{ secrets.DEPLOY_HOST }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          printf '%s' "$GH_TOKEN" | ssh "ubuntu@$HOST" 'docker login ghcr.io -u AangTN --password-stdin'
+          trap 'ssh "ubuntu@$HOST" "docker logout ghcr.io"' EXIT
+          ssh "ubuntu@$HOST" "bash /opt/swiftride/deploy/release.sh '$GITHUB_SHA' '$HOST'"

@@ -1,0 +1,34 @@
+# Demo deployment: keeps the simulated OTP and seed data from compose.yml.
+services:
+  auth:
+    image: ${REGISTRY_PREFIX}/auth:${DEPLOY_TAG}
+  trip:
+    image: ${REGISTRY_PREFIX}/trip:${DEPLOY_TAG}
+  matching:
+    image: ${REGISTRY_PREFIX}/matching:${DEPLOY_TAG}
+  payment:
+    image: ${REGISTRY_PREFIX}/payment:${DEPLOY_TAG}
+  gateway:
+    image: ${REGISTRY_PREFIX}/gateway:${DEPLOY_TAG}
+    environment:
+      Gateway__TrustedProxy: 172.29.0.20
+  nginx:
+    image: ${REGISTRY_PREFIX}/web:${DEPLOY_TAG}
+    restart: unless-stopped
+    environment:
+      PUBLIC_HOST: ${PUBLIC_HOST}
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./.tls/letsencrypt:/etc/letsencrypt:ro
+      - ./.tls/www:/var/www/acme:ro
+    networks:
+      backend: {ipv4_address: 172.29.0.20}
+    depends_on:
+      gateway: {condition: service_healthy}
+    healthcheck:
+      test: [CMD-SHELL, "wget -q --spider http://127.0.0.1/nginx-health"]
+      interval: 15s
+      timeout: 5s
+      retries: 10

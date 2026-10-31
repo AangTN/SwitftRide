@@ -1,5 +1,7 @@
 # SwiftRide
 
+Deploy bản demo lên VPS bằng Docker, Nginx và GitHub Actions: [hướng dẫn](docs/deployment.md).
+
 Backend .NET 10 gồm Auth, Trip, Matching & Pricing, Payment và API Gateway YARP. Mỗi service có Domain / Application / Infrastructure / Api. `ServiceDefaults` chỉ chia sẻ cấu hình hạ tầng; không chia sẻ domain entity hoặc database.
 
 ## Phạm vi đã triển khai

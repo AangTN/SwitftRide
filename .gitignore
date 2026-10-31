@@ -8,3 +8,6 @@ TestResults/
 *.user
 *.suo
 artifacts/
+.tls/
+.release.env
+apps/mobile/nginx.conf.template
