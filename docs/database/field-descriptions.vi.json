@@ -1,0 +1,154 @@
+{
+  "TripDB.trips": {
+    "id": "Mã chuyến đi do Trip tạo khi khách bắt đầu đặt xe.",
+    "rider_id": "Mã tài khoản khách đặt xe trong AuthDB; đây là tham chiếu logic, không phải khóa ngoại xuyên database.",
+    "accepted_proposal_id": "FK tới proposal đã được tài xế nhận, ban đầu để trống. Giá, tài xế và thông tin xe lấy từ proposal này; phải thuộc đúng chuyến.",
+    "vehicle_type": "Loại xe khách yêu cầu; hiện xe máy, có thể mở rộng ô tô 4 hoặc 7 chỗ.",
+    "pickup_address": "Địa chỉ hiển thị của điểm đón khách.",
+    "pickup_latitude": "Vĩ độ điểm đón khách, trong khoảng -90 đến 90.",
+    "pickup_longitude": "Kinh độ điểm đón khách, trong khoảng -180 đến 180.",
+    "destination_address": "Địa chỉ hiển thị của điểm đến.",
+    "destination_latitude": "Vĩ độ điểm đến, trong khoảng -90 đến 90.",
+    "destination_longitude": "Kinh độ điểm đến, trong khoảng -180 đến 180.",
+    "status": "Trạng thái toàn chuyến: đang tìm, chờ khách, chờ tài xế, đang chạy, chờ thanh toán, hoàn tất, hủy hoặc thất bại.",
+    "picked_up_at": "Thời điểm tài xế xác nhận đã đón khách.",
+    "dropped_off_at": "Thời điểm xác nhận đã trả khách; có thể giải phóng tài xế trước khi thanh toán hoàn tất.",
+    "completed_at": "Thời điểm chuyến hoàn tất thành công sau khi thanh toán được xác nhận; không đồng nghĩa chỉ mới trả khách.",
+    "created_at": "Thời điểm tạo bản ghi, lưu theo UTC.",
+    "updated_at": "Thời điểm cập nhật bản ghi gần nhất, lưu theo UTC."
+  },
+  "TripDB.trip_proposals": {
+    "id": "Mã một lượt đề xuất. Trip tạo trước khi gọi Matching, rồi gửi sang để Matching lưu currentProposalId khi giữ tài xế.",
+    "trip_id": "FK tới trips.id; một chuyến có thể có nhiều lượt đề xuất tài xế.",
+    "driver_id": "Tài xế của lượt đề xuất. Trống khi Searching; phải có trước khi hiển thị cho khách. Không đề xuất lại tài xế cũ trong cùng chuyến.",
+    "status": "Bước/kết quả của riêng lượt này: Searching, chờ khách, khách từ chối/hết giờ, chờ tài xế, tài xế từ chối/hết giờ/đồng ý, hủy hoặc không tìm được.",
+    "fare_amount": "Giá tính cho riêng lượt này. Mỗi lượt tính lại; đầu vào giống nhau có thể ra cùng giá. Không sửa báo giá của proposal đã nhận.",
+    "currency": "Mã tiền tệ của số tiền, hiện mặc định VND.",
+    "pricing_snapshot": "JSON lưu quãng đường/thời gian ước tính cùng đơn giá mỗi km/phút, surge, phí phụ, hệ số khuyến mãi và thuế đã dùng; lưu bằng nvarchar(max) trong SQL Server 2022.",
+    "driver_name_snapshot": "Tên tài xế đã hiển thị cho khách trong lượt đề xuất; giữ nguyên để bảo toàn lịch sử.",
+    "plate_number_snapshot": "Biển số xe đã hiển thị trong lượt đề xuất; không đổi theo hồ sơ xe sau này.",
+    "vehicle_name_snapshot": "Tên xe đã hiển thị trong lượt đề xuất, ví dụ Honda Wave Alpha.",
+    "vehicle_image_key_snapshot": "Tham chiếu ảnh xe tại lúc đề xuất; không chứa dữ liệu ảnh nhị phân.",
+    "rider_approval_expires_at": "Hạn khách được duyệt tài xế và giá. Khách không duyệt đúng hạn thì hủy chuyến, không tự tìm tiếp.",
+    "rider_responded_at": "Thời điểm khách phản hồi. Xem status để biết đồng ý hay từ chối.",
+    "driver_response_expires_at": "Hạn tài xế được trả lời lời mời, được đặt sau khi khách đồng ý và Matching xác nhận gia hạn giữ chỗ.",
+    "driver_responded_at": "Thời điểm tài xế phản hồi. Nếu status là DriverAccepted thì đây chính là thời điểm tài xế nhận chuyến.",
+    "created_at": "Thời điểm tạo bản ghi, lưu theo UTC.",
+    "updated_at": "Thời điểm cập nhật bản ghi gần nhất, lưu theo UTC."
+  },
+  "TripDB.trip_status_history": {
+    "id": "Mã định danh duy nhất của bản ghi, dùng làm khóa chính.",
+    "trip_id": "FK tới trips.id, chuyến có thay đổi trạng thái.",
+    "from_status": "Trạng thái chuyến trước khi đổi; có thể trống với dòng đầu tiên khi tạo chuyến.",
+    "to_status": "Trạng thái mới của chuyến.",
+    "actor_user_id": "Mã người thực hiện thay đổi; để trống nếu do worker/hệ thống.",
+    "created_at": "Thời điểm phát sinh chuyển trạng thái, UTC; dùng để dựng lịch sử chuyến."
+  },
+  "MatchingDB.driver_profiles": {
+    "_id": "UserId tài xế từ Auth, lưu dạng chuỗi UUID; một document cho mỗi tài xế.",
+    "legalName": "Tên tài xế do Matching quản lý, độc lập với tên hiển thị khách hàng trong Auth; thay đổi qua quy trình hồ sơ tài xế.",
+    "plateNumber": "Biển số xe đã chuẩn hóa, bắt buộc và duy nhất.",
+    "vehicleName": "Tên xe tài xế dùng, ví dụ Honda Wave Alpha.",
+    "vehicleType": "Loại xe gốc do Matching quản lý; hiện mặc định Motorbike, có thể mở rộng Car4Seats hoặc Car7Seats.",
+    "vehicleImageKey": "Đường dẫn hoặc object key ảnh xe; không lưu dữ liệu ảnh nhị phân trong document.",
+    "createdAt": "Thời điểm tạo document MongoDB, lưu theo UTC.",
+    "updatedAt": "Thời điểm cập nhật document gần nhất, lưu theo UTC."
+  },
+  "MatchingDB.driver_availability": {
+    "_id": "Cùng UserId với driver_profiles._id; mỗi tài xế chỉ có một document trạng thái và cập nhật lại khi thay đổi.",
+    "vehicleType": "Bản sao loại xe của hồ sơ, phục vụ lọc cùng vị trí/trạng thái khi tìm tài xế.",
+    "status": "Offline: tắt nhận chuyến; Available: rảnh; Reserved: đang giữ chỗ; Busy: đã nhận/đang chạy chuyến.",
+    "location": "Object GeoJSON {type: Point, coordinates: [kinh độ, vĩ độ]}; index 2dsphere để tìm gần. Có thể trống lúc chưa cập nhật GPS.",
+    "locationUpdatedAt": "Lúc nhận vị trí GPS gần nhất. Loại tài xế có vị trí quá cũ khỏi kết quả tìm.",
+    "currentTripId": "Mã chuyến đang giữ chỗ hoặc đang chạy. Là tham chiếu logic tới TripDB, không có FK xuyên database.",
+    "currentProposalId": "Mã lượt đề xuất đã tạo trong TripDB, chỉ giữ khi Reserved. Kiểm tra mã này để lệnh đến muộn không gia hạn/giải phóng nhầm lượt.",
+    "reservedUntil": "Hạn giữ chỗ tài xế; gia hạn khi khách đồng ý để chờ tài xế phản hồi. Không dùng làm hạn giải phóng tài xế Busy và không TTL-xóa document.",
+    "updatedAt": "Thời điểm cập nhật document gần nhất, lưu theo UTC."
+  },
+  "AuthDB.users": {
+    "id": "Mã tài khoản UserId dùng chung cho hai app Rider/Driver; một SĐT chỉ tạo một tài khoản.",
+    "phone_number": "SĐT Việt Nam chuẩn hóa dạng +84; duy nhất, dùng để đăng ký và đăng nhập OTP.",
+    "full_name": "Tên hiển thị khách hàng hoặc tên tài khoản trong Auth; không phải tên tài xế do Matching quản lý.",
+    "status": "Active: được sử dụng tài khoản. Blocked: bị khóa; không đăng nhập/refresh được.",
+    "phone_verified_at": "Thời điểm xác minh SĐT thành công. OTP giả lập Development không chứng minh quyền sở hữu SĐT thật.",
+    "created_at": "Thời điểm tạo bản ghi, lưu theo UTC.",
+    "updated_at": "Thời điểm cập nhật bản ghi gần nhất, lưu theo UTC."
+  },
+  "AuthDB.roles": {
+    "id": "Mã role UUID, là khóa chính ổn định. Đổi tên role không làm thay đổi các liên kết user_roles.",
+    "name": "Tên quyền, bắt buộc và UNIQUE: Rider, Driver hoặc Admin. JWT và API vẫn dùng tên quyền để phân quyền."
+  },
+  "AuthDB.user_roles": {
+    "user_id": "FK tới users.id, cho biết cấp quyền cho tài khoản nào.",
+    "role_id": "FK tới roles.id, cho biết quyền nào được cấp. Cặp (user_id, role_id) là khóa chính nên không gán trùng cùng quyền cho cùng tài khoản."
+  },
+  "AuthDB.otp_challenges": {
+    "client_app": "Loại app đã kiểm tra khi yêu cầu OTP; xác nhận phải khớp và phiên/token lấy phạm vi từ đây. Đăng ký luôn là RiderApp.",
+    "id": "Mã challengeId trả về sau khi yêu cầu OTP; client phải gửi đúng mã này khi verify.",
+    "phone_number": "SĐT cần xác minh. Không có FK tới users vì lúc đăng ký tài khoản chưa được tạo.",
+    "purpose": "Register: xác minh đăng ký. Login: xác minh đăng nhập. Không dùng challenge của mục đích này cho mục đích kia.",
+    "registration_full_name": "Tên khách chờ đăng ký hoặc kích hoạt Rider; chỉ áp dụng sau khi OTP đúng. Để trống khi đăng nhập.",
+    "code_hash": "HMAC-SHA256 của OTP gắn với challenge, SĐT và mục đích; không lưu mã OTP gốc.",
+    "request_ip": "IP nguồn yêu cầu OTP, dùng để đếm giới hạn gửi mã; chỉ tin forwarded IP từ proxy được cấu hình.",
+    "attempt_count": "Số lần nhập sai OTP. Đủ 5 lần theo cấu hình mặc định thì vô hiệu hóa challenge.",
+    "created_at": "Thời điểm tạo bản ghi, lưu theo UTC.",
+    "expires_at": "Hạn xác minh OTP, mặc định 5 phút từ lúc tạo. Sau hạn, mã đúng cũng không được chấp nhận.",
+    "consumed_at": "Thời điểm OTP được dùng thành công; có giá trị thì không cho dùng lại.",
+    "invalidated_at": "Thời điểm challenge bị vô hiệu hóa, ví dụ do gửi mã mới hoặc nhập sai đủ số lần."
+  },
+  "AuthDB.auth_sessions": {
+    "id": "SessionId / claim sid trong JWT. Mỗi lần đăng nhập tạo một phiên; các lần refresh của phiên giữ cùng mã này.",
+    "user_id": "Mã tài khoản trong users mà bản ghi này thuộc về.",
+    "client_app": "Loại app lấy từ challenge: RiderApp, DriverApp hoặc AdminApp. Giới hạn JWT đăng nhập và refresh theo role tương ứng mà tài khoản còn có.",
+    "device_name": "Tên thiết bị do client gửi để nhận biết phiên, ví dụ iPhone; không phải bằng chứng bảo mật.",
+    "created_at": "Thời điểm tạo bản ghi, lưu theo UTC.",
+    "expires_at": "Hạn tuyệt đối của phiên, mặc định 30 ngày từ đăng nhập. Refresh không kéo dài hạn này.",
+    "revoked_at": "Thời điểm thu hồi phiên. Có giá trị thì mọi refresh token của phiên không dùng tiếp được.",
+    "revocation_reason": "Lý do thu hồi như Logout, RefreshTokenReuse hoặc UserBlocked."
+  },
+  "AuthDB.refresh_tokens": {
+    "id": "Mã bản ghi token trong database; khác chuỗi refresh token gốc mà app nhận.",
+    "session_id": "FK tới auth_sessions.id, nhóm mọi thế hệ refresh token của một lần đăng nhập.",
+    "token_hash": "SHA-256 của refresh token ngẫu nhiên, duy nhất. App giữ token gốc, database chỉ giữ hash.",
+    "created_at": "Thời điểm tạo bản ghi, lưu theo UTC.",
+    "expires_at": "Hạn refresh token, không vượt quá hạn tuyệt đối của phiên.",
+    "used_at": "Thời điểm token đã được đổi lấy cặp token mới. Gửi lại token đã dùng sẽ thu hồi phiên.",
+    "replaced_by_token_id": "Mã bản ghi refresh token mới thay thế token này; FK ghép bảo đảm token thay thế vẫn thuộc cùng phiên."
+  },
+  "PaymentDB.payments": {
+    "id": "Mã giao dịch thanh toán của Payment Service.",
+    "trip_id": "Mã chuyến được thanh toán, duy nhất theo phạm vi một payment/chuyến; tham chiếu logic tới TripDB.",
+    "rider_id": "UserId khách trả tiền, nhận từ Trip qua backend tin cậy.",
+    "driver_id": "UserId tài xế hưởng tiền, nhận từ proposal được Trip chốt; không lấy tùy ý từ app.",
+    "amount": "Số tiền đã chốt từ proposal được nhận; Payment lưu độc lập để xử lý và kiểm toán. Không dùng float.",
+    "currency": "Mã tiền tệ của số tiền, hiện mặc định VND.",
+    "status": "Pending: chờ; Processing: đang xử lý; Succeeded: thành công; Failed: thất bại.",
+    "idempotency_key": "Khóa duy nhất của một yêu cầu nghiệp vụ; gửi lại cùng yêu cầu không được thực hiện thu/ghi tiền thêm lần nữa.",
+    "provider_reference": "Mã tham chiếu do cổng thanh toán trả về; để trống nếu chưa có.",
+    "failure_code": "Mã lỗi xử lý thanh toán, có giá trị khi có lỗi.",
+    "paid_at": "Thời điểm xác nhận thanh toán thành công.",
+    "created_at": "Thời điểm tạo bản ghi, lưu theo UTC.",
+    "updated_at": "Thời điểm cập nhật bản ghi gần nhất, lưu theo UTC."
+  },
+  "PaymentDB.ledger_accounts": {
+    "id": "Mã tài khoản kế toán trong sổ cái; khác tài khoản đăng nhập.",
+    "code": "Loại tài khoản kế toán, ví dụ PAYMENT_CLEARING, DRIVER_PAYABLE hoặc PLATFORM_REVENUE.",
+    "owner_user_id": "UserId chủ tài khoản kế toán, ví dụ tài xế được trả tiền. Trống nếu là tài khoản chung của nền tảng.",
+    "currency": "Loại tiền mà tài khoản kế toán theo dõi; mỗi tài khoản gắn một loại tiền.",
+    "created_at": "Thời điểm tạo bản ghi, lưu theo UTC."
+  },
+  "PaymentDB.ledger_transactions": {
+    "id": "Mã một nghiệp vụ ghi sổ, nhóm các dòng Nợ/Có cần cân bằng.",
+    "payment_id": "FK tới payments.id; một payment có thể có nhiều nghiệp vụ như thu tiền rồi hoàn tiền sau này.",
+    "type": "Loại nghiệp vụ, ví dụ PaymentReceived; Refund/Adjustment chỉ là khả năng mở rộng, chưa triển khai.",
+    "idempotency_key": "Khóa duy nhất chống ghi sổ lại cùng một nghiệp vụ khi message/request bị gửi trùng.",
+    "created_at": "Thời điểm tạo bản ghi, lưu theo UTC."
+  },
+  "PaymentDB.ledger_entries": {
+    "id": "Mã dòng ghi sổ Nợ/Có.",
+    "transaction_id": "FK tới ledger_transactions.id, cho biết dòng thuộc nghiệp vụ nào.",
+    "account_id": "FK tới ledger_accounts.id, tài khoản kế toán bị tác động.",
+    "side": "Debit (Nợ) hoặc Credit (Có); tổng hai phía của một nghiệp vụ phải bằng nhau. Không đồng nhất đơn giản với trừ/cộng tiền.",
+    "amount": "Số tiền dương của dòng ghi sổ, không dùng số âm để thay cho phía Debit/Credit."
+  }
+}

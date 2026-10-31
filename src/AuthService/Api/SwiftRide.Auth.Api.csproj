@@ -1,0 +1,8 @@
+<Project Sdk="Microsoft.NET.Sdk.Web">
+  <ItemGroup>
+    <ProjectReference Include="../Application/SwiftRide.Auth.Application.csproj" />
+    <ProjectReference Include="../Infrastructure/SwiftRide.Auth.Infrastructure.csproj" />
+    <ProjectReference Include="../../ServiceDefaults/SwiftRide.ServiceDefaults.csproj" />
+  </ItemGroup>
+  <ItemGroup><PackageReference Include="Microsoft.EntityFrameworkCore.Design" PrivateAssets="all" /></ItemGroup>
+</Project>

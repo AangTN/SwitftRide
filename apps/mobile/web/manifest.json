@@ -1,0 +1,19 @@
+{
+  "name": "SwiftRide",
+  "short_name": "SwiftRide",
+  "start_url": ".",
+  "display": "standalone",
+  "background_color": "#f0f6f2",
+  "theme_color": "#00ac62",
+  "description": "Đặt xe nhanh, đi đâu cũng tiện.",
+  "orientation": "portrait-primary",
+  "prefer_related_applications": false,
+  "icons": [
+    {
+      "type": "image/svg+xml",
+      "sizes": "any",
+      "purpose": "any",
+      "src": "swiftride.svg"
+    }
+  ]
+}

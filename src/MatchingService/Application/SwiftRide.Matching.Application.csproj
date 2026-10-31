@@ -1,0 +1,5 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <ItemGroup>
+    <ProjectReference Include="../Domain/SwiftRide.Matching.Domain.csproj" />
+  </ItemGroup>
+</Project>

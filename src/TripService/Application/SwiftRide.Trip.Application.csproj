@@ -1,0 +1,5 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <ItemGroup>
+    <ProjectReference Include="../Domain/SwiftRide.Trip.Domain.csproj" />
+  </ItemGroup>
+</Project>

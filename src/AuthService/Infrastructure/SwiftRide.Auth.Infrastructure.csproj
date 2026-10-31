@@ -1,0 +1,12 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <ItemGroup>
+    <ProjectReference Include="../Domain/SwiftRide.Auth.Domain.csproj" />
+    <ProjectReference Include="../Application/SwiftRide.Auth.Application.csproj" />
+    <ProjectReference Include="../../ServiceDefaults/SwiftRide.ServiceDefaults.csproj" />
+  </ItemGroup>
+  <ItemGroup>
+    <PackageReference Include="Npgsql.EntityFrameworkCore.PostgreSQL" />
+    <PackageReference Include="Microsoft.EntityFrameworkCore.Design" PrivateAssets="all" />
+    <PackageReference Include="Microsoft.AspNetCore.Authentication.JwtBearer" />
+  </ItemGroup>
+</Project>

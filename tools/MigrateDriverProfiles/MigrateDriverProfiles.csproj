@@ -1,0 +1,7 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup><OutputType>Exe</OutputType></PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="../../src/AuthService/Infrastructure/SwiftRide.Auth.Infrastructure.csproj" />
+    <ProjectReference Include="../../src/MatchingService/Infrastructure/SwiftRide.Matching.Infrastructure.csproj" />
+  </ItemGroup>
+</Project>

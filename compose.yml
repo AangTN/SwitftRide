@@ -1,0 +1,198 @@
+name: swiftride
+
+x-api-environment: &api-environment
+  ASPNETCORE_ENVIRONMENT: Development
+  Security__PublicKeyPath: /run/keys/auth-public.pem
+  Gateway__TrustedProxy: 172.29.0.10
+  RabbitMq__Host: rabbitmq
+  RabbitMq__Username: swiftride
+  RabbitMq__Password: ${RABBITMQ_PASSWORD:?Run scripts/Initialize-Dev.ps1}
+  Database__MigrateOnStartup: "true"
+
+x-api-common: &api-common
+  restart: unless-stopped
+  networks: [backend]
+  healthcheck:
+    test: [CMD, bash, -c, "exec 3<>/dev/tcp/127.0.0.1/8080; printf 'GET /health/ready HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n' >&3; head -n 1 <&3 | grep -q '200'"]
+    interval: 15s
+    timeout: 5s
+    retries: 10
+    start_period: 60s
+
+services:
+  postgres:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: ${POSTGRES_ADMIN_PASSWORD:?Run scripts/Initialize-Dev.ps1}
+      AUTH_DB_PASSWORD: ${AUTH_DB_PASSWORD:?Run scripts/Initialize-Dev.ps1}
+      PAYMENT_DB_PASSWORD: ${PAYMENT_DB_PASSWORD:?Run scripts/Initialize-Dev.ps1}
+    ports: ["127.0.0.1:5432:5432"]
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+      - ./deploy/postgres/init.sh:/docker-entrypoint-initdb.d/01-apps.sh:ro
+    networks: [backend]
+    healthcheck:
+      test: [CMD-SHELL, "pg_isready -U postgres -d postgres"]
+      interval: 5s
+      timeout: 3s
+      retries: 30
+
+  sqlserver:
+    image: mcr.microsoft.com/mssql/server:2022-latest
+    environment:
+      ACCEPT_EULA: "Y"
+      MSSQL_PID: Developer
+      MSSQL_SA_PASSWORD: ${SQLSERVER_SA_PASSWORD:?Run scripts/Initialize-Dev.ps1}
+    ports: ["127.0.0.1:1433:1433"]
+    volumes: ["sqlserver-data:/var/opt/mssql"]
+    networks: [backend]
+    healthcheck:
+      test: [CMD-SHELL, "SQLCMDPASSWORD=$$MSSQL_SA_PASSWORD /opt/mssql-tools18/bin/sqlcmd -S localhost -U sa -C -Q 'SELECT 1' -b -o /dev/null"]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+      start_period: 30s
+
+  sqlserver-init:
+    image: mcr.microsoft.com/mssql/server:2022-latest
+    environment:
+      SQLSERVER_SA_PASSWORD: ${SQLSERVER_SA_PASSWORD:?Run scripts/Initialize-Dev.ps1}
+      TRIP_DB_PASSWORD: ${TRIP_DB_PASSWORD:?Run scripts/Initialize-Dev.ps1}
+    entrypoint: [bash, /init/init.sh]
+    volumes: ["./deploy/sqlserver:/init:ro"]
+    networks: [backend]
+    depends_on:
+      sqlserver: {condition: service_healthy}
+
+  mongo:
+    image: mongo:8.0
+    environment:
+      MONGO_INITDB_ROOT_USERNAME: root
+      MONGO_INITDB_ROOT_PASSWORD: ${MONGO_ROOT_PASSWORD:?Run scripts/Initialize-Dev.ps1}
+      MATCHING_DB_PASSWORD: ${MATCHING_DB_PASSWORD:?Run scripts/Initialize-Dev.ps1}
+    ports: ["127.0.0.1:27017:27017"]
+    volumes:
+      - mongo-data:/data/db
+      - ./deploy/mongo/init.js:/docker-entrypoint-initdb.d/01-app.js:ro
+    networks: [backend]
+    healthcheck:
+      test: [CMD, mongosh, --quiet, --eval, "quit(db.adminCommand({ping:1}).ok ? 0 : 1)"]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+
+  rabbitmq:
+    image: rabbitmq:4-management-alpine
+    environment:
+      RABBITMQ_DEFAULT_USER: swiftride
+      RABBITMQ_DEFAULT_PASS: ${RABBITMQ_PASSWORD:?Run scripts/Initialize-Dev.ps1}
+    ports: ["127.0.0.1:5672:5672", "127.0.0.1:15672:15672"]
+    volumes: ["rabbitmq-data:/var/lib/rabbitmq"]
+    networks: [backend]
+    healthcheck:
+      test: [CMD, rabbitmq-diagnostics, -q, ping]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+
+  auth:
+    <<: *api-common
+    build:
+      context: .
+      args: {PROJECT: src/AuthService/Api/SwiftRide.Auth.Api.csproj}
+    command: [SwiftRide.Auth.Api.dll]
+    environment:
+      <<: *api-environment
+      ConnectionStrings__AuthDb: Host=postgres;Database=AuthDB;Username=auth_app;Password=${AUTH_DB_PASSWORD}
+      Security__PrivateKeyPath: /run/keys/auth-private.pem
+      Otp__HmacSecret: ${OTP_HMAC_SECRET:?Run scripts/Initialize-Dev.ps1}
+      Otp__UseDevelopmentOtp: "true"
+      Seed__Enabled: "true"
+    ports: ["127.0.0.1:5101:8080"]
+    volumes:
+      - ./.secrets/auth-public.pem:/run/keys/auth-public.pem:ro
+      - ./.secrets/auth-private.pem:/run/keys/auth-private.pem:ro
+    depends_on:
+      postgres: {condition: service_healthy}
+      rabbitmq: {condition: service_healthy}
+
+  trip:
+    <<: *api-common
+    build:
+      context: .
+      args: {PROJECT: src/TripService/Api/SwiftRide.Trip.Api.csproj}
+    command: [SwiftRide.Trip.Api.dll]
+    environment:
+      <<: *api-environment
+      ConnectionStrings__TripDb: Server=sqlserver;Database=TripDB;User Id=trip_app;Password=${TRIP_DB_PASSWORD};TrustServerCertificate=True
+    ports: ["127.0.0.1:5102:8080"]
+    volumes: ["./.secrets/auth-public.pem:/run/keys/auth-public.pem:ro"]
+    depends_on:
+      sqlserver-init: {condition: service_completed_successfully}
+      rabbitmq: {condition: service_healthy}
+
+  matching:
+    <<: *api-common
+    build:
+      context: .
+      args: {PROJECT: src/MatchingService/Api/SwiftRide.Matching.Api.csproj}
+    command: [SwiftRide.Matching.Api.dll]
+    environment:
+      <<: *api-environment
+      ConnectionStrings__MatchingDb: mongodb://matching_app:${MATCHING_DB_PASSWORD}@mongo:27017/MatchingDB?authSource=MatchingDB
+      Seed__Enabled: "true"
+    ports: ["127.0.0.1:5103:8080"]
+    volumes: ["./.secrets/auth-public.pem:/run/keys/auth-public.pem:ro"]
+    depends_on:
+      mongo: {condition: service_healthy}
+      rabbitmq: {condition: service_healthy}
+
+  payment:
+    <<: *api-common
+    build:
+      context: .
+      args: {PROJECT: src/PaymentService/Api/SwiftRide.Payment.Api.csproj}
+    command: [SwiftRide.Payment.Api.dll]
+    environment:
+      <<: *api-environment
+      ConnectionStrings__PaymentDb: Host=postgres;Database=PaymentDB;Username=payment_app;Password=${PAYMENT_DB_PASSWORD}
+    ports: ["127.0.0.1:5104:8080"]
+    volumes: ["./.secrets/auth-public.pem:/run/keys/auth-public.pem:ro"]
+    depends_on:
+      postgres: {condition: service_healthy}
+      rabbitmq: {condition: service_healthy}
+
+  gateway:
+    <<: *api-common
+    build:
+      context: .
+      args: {PROJECT: src/ApiGateway/SwiftRide.ApiGateway.csproj}
+    command: [SwiftRide.ApiGateway.dll]
+    environment:
+      ASPNETCORE_ENVIRONMENT: Development
+      Security__PublicKeyPath: /run/keys/auth-public.pem
+      ReverseProxy__Clusters__auth__Destinations__primary__Address: http://auth:8080/
+      ReverseProxy__Clusters__trip__Destinations__primary__Address: http://trip:8080/
+      ReverseProxy__Clusters__matching__Destinations__primary__Address: http://matching:8080/
+      ReverseProxy__Clusters__payment__Destinations__primary__Address: http://payment:8080/
+    ports: ["127.0.0.1:5000:8080"]
+    volumes: ["./.secrets/auth-public.pem:/run/keys/auth-public.pem:ro"]
+    networks:
+      backend: {ipv4_address: 172.29.0.10}
+    depends_on:
+      auth: {condition: service_healthy}
+      trip: {condition: service_healthy}
+      matching: {condition: service_healthy}
+      payment: {condition: service_healthy}
+
+networks:
+  backend:
+    ipam:
+      config: [{subnet: 172.29.0.0/24}]
+
+volumes:
+  postgres-data:
+  sqlserver-data:
+  mongo-data:
+  rabbitmq-data:

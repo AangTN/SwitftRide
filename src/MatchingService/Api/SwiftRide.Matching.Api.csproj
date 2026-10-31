@@ -1,0 +1,7 @@
+<Project Sdk="Microsoft.NET.Sdk.Web">
+  <ItemGroup>
+    <ProjectReference Include="../Application/SwiftRide.Matching.Application.csproj" />
+    <ProjectReference Include="../Infrastructure/SwiftRide.Matching.Infrastructure.csproj" />
+    <ProjectReference Include="../../ServiceDefaults/SwiftRide.ServiceDefaults.csproj" />
+  </ItemGroup>
+</Project>

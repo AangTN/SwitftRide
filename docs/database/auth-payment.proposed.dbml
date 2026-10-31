@@ -1,0 +1,207 @@
+// AuthDB and PaymentDB are separate PostgreSQL databases.
+// This is the proposed target: driver_profiles moves OUT of AuthDB into MatchingDB.
+// UUID references to users/trips in OTHER databases are logical, never physical FKs.
+
+Enum AuthDB.user_status {
+  Active
+  Blocked
+}
+
+Enum AuthDB.otp_purpose {
+  Register
+  Login
+}
+
+Table AuthDB.users {
+  id uuid [pk, not null]
+  phone_number varchar(16) [not null, unique, note: 'Vietnamese mobile number normalized to +84 format.']
+  full_name varchar(150) [not null]
+  status AuthDB.user_status [not null, default: 'Active']
+  phone_verified_at timestamptz [not null]
+  created_at timestamptz [not null]
+  updated_at timestamptz [not null]
+
+  Note: 'Identity and original full name are owned by Auth. No password: OTP login. Vehicle data belongs to Matching in the proposed design.'
+}
+
+Table AuthDB.roles {
+  id uuid [pk, not null, note: 'Stable role identity; user_roles references this ID.']
+  name varchar(20) [not null, unique, note: 'Unique role name. Seed values: Rider, Driver, Admin.']
+}
+
+Table AuthDB.user_roles {
+  user_id uuid [not null]
+  role_id uuid [not null]
+
+  indexes {
+    (user_id, role_id) [pk]
+    role_id
+  }
+
+  Note: 'One account can have Rider AND Driver. Public registration grants Rider only.'
+}
+
+Table AuthDB.otp_challenges {
+  id uuid [pk, not null]
+  phone_number varchar(16) [not null]
+  purpose AuthDB.otp_purpose [not null]
+  client_app varchar(20) [not null, note: 'App checked at OTP request; verification must match; determines session role scope. Registration is RiderApp.']
+  registration_full_name varchar(150) [null, note: 'Pending registration name; no user exists yet. Null for login.']
+  code_hash varchar(64) [not null, note: 'HMAC-SHA256 bound to challenge, phone and purpose. Never plaintext OTP.']
+  request_ip varchar(64) [not null, note: 'OTP request rate-limit accounting.']
+  attempt_count integer [not null, default: 0]
+  created_at timestamptz [not null]
+  expires_at timestamptz [not null]
+  consumed_at timestamptz [null]
+  invalidated_at timestamptz [null]
+
+  indexes {
+    (phone_number, created_at)
+    (request_ip, phone_number, created_at)
+  }
+
+  Note: '''
+    No FK to users: registration may target a not-yet-created user.
+    Development-only fixed OTP 123456, not returned in responses.
+    Default lifetime 5 minutes, at most 5 incorrect attempts, resend after 60 seconds.
+    New challenge invalidates the previous one with the same phone and purpose.
+    Never create a user before successful registration OTP verification.
+  '''
+}
+
+Table AuthDB.auth_sessions {
+  id uuid [pk, not null, note: 'SessionId / sid; one session per successful login.']
+  user_id uuid [not null]
+  client_app varchar(20) [not null, note: 'From OTP challenge. JWT and refresh restricted to the corresponding current user role.']
+  device_name varchar(200) [null]
+  created_at timestamptz [not null]
+  expires_at timestamptz [not null, note: 'Absolute session deadline; default 30 days, not extended by refresh.']
+  revoked_at timestamptz [null]
+  revocation_reason varchar(50) [null, note: 'For example Logout, RefreshTokenReuse or UserBlocked.']
+
+  indexes {
+    (user_id, expires_at)
+  }
+}
+
+Table AuthDB.refresh_tokens {
+  id uuid [pk, not null]
+  session_id uuid [not null]
+  token_hash varchar(64) [not null, unique, note: 'SHA-256 of the random refresh token; raw token goes only to the client.']
+  created_at timestamptz [not null]
+  expires_at timestamptz [not null]
+  used_at timestamptz [null]
+  replaced_by_token_id uuid [null, note: 'Next refresh token generation in the SAME session.']
+
+  indexes {
+    (session_id, id) [unique, name: 'UQ_refresh_token_session_id_id']
+    (session_id, replaced_by_token_id)
+  }
+
+  Note: '''
+    Refresh creates a replacement and marks its predecessor used in one transaction.
+    Reusing any used generation revokes the whole session, including its newest token.
+    Retain used token records until the session has expired for reuse detection.
+    Access JWTs are not stored in the database; existing access JWTs expire naturally.
+  '''
+}
+
+Ref auth_user_role_user: AuthDB.user_roles.user_id > AuthDB.users.id [delete: cascade, update: no action]
+Ref auth_user_role_role: AuthDB.user_roles.role_id > AuthDB.roles.id [delete: no action, update: no action]
+Ref auth_session_user: AuthDB.auth_sessions.user_id > AuthDB.users.id [delete: no action, update: no action]
+Ref auth_refresh_session: AuthDB.refresh_tokens.session_id > AuthDB.auth_sessions.id [delete: no action, update: no action]
+Ref auth_refresh_replacement_same_session: AuthDB.refresh_tokens.(session_id, replaced_by_token_id) > AuthDB.refresh_tokens.(session_id, id) [delete: no action, update: no action]
+
+Enum PaymentDB.payment_status {
+  Pending
+  Processing
+  Succeeded
+  Failed
+}
+
+Enum PaymentDB.entry_side {
+  Debit
+  Credit
+}
+
+Table PaymentDB.payments {
+  id uuid [pk, not null]
+  trip_id uuid [not null, unique, note: 'Logical TripDB.trips.id; one payment per trip in the current scope. No cross-database FK.']
+  rider_id uuid [not null, note: 'Logical Auth user ID of payer; supplied by trusted Trip backend.']
+  driver_id uuid [not null, note: 'Logical Auth user ID of beneficiary; supplied by Trip from its accepted proposal.']
+  amount numeric(18,2) [not null, note: 'Nonnegative; supplied from the accepted proposal, never trusted from app input.']
+  currency varchar(3) [not null, default: 'VND']
+  status PaymentDB.payment_status [not null, default: 'Pending']
+  idempotency_key varchar(100) [not null, unique]
+  provider_reference varchar(200) [null]
+  failure_code varchar(100) [null]
+  paid_at timestamptz [null]
+  created_at timestamptz [not null]
+  updated_at timestamptz [not null]
+
+  indexes {
+    (rider_id, created_at)
+    (driver_id, created_at)
+  }
+
+  Note: 'Retries reuse the same operation identity. Payment stores its own agreed amount for financial history; do not look up a mutable price from another service. No card number/CVV storage.'
+}
+
+Table PaymentDB.ledger_accounts {
+  id uuid [pk, not null]
+  code varchar(50) [not null, note: 'Accounting category, for example PAYMENT_CLEARING, DRIVER_PAYABLE or PLATFORM_REVENUE.']
+  owner_user_id uuid [null, note: 'Logical Auth user ID for driver accounts; null for platform-wide accounts.']
+  currency varchar(3) [not null, default: 'VND']
+  created_at timestamptz [not null]
+
+  indexes {
+    (code, owner_user_id, currency) [unique, name: 'UQ_ledger_account_owner_currency']
+  }
+
+  Note: 'These are accounting accounts, not login accounts. PostgreSQL uniqueness uses NULLS NOT DISTINCT for owner_user_id; generic DBML does not express that option.'
+}
+
+Table PaymentDB.ledger_transactions {
+  id uuid [pk, not null]
+  payment_id uuid [not null]
+  type varchar(50) [not null, note: 'Operation grouping, for example PaymentReceived; future Refund/Adjustment.']
+  idempotency_key varchar(100) [not null, unique]
+  created_at timestamptz [not null]
+
+  Note: 'One payment can have several separately balanced operations. Refunds/payouts are not implemented in the initial scope.'
+}
+
+Table PaymentDB.ledger_entries {
+  id uuid [pk, not null]
+  transaction_id uuid [not null]
+  account_id uuid [not null]
+  side PaymentDB.entry_side [not null]
+  amount numeric(18,2) [not null, note: 'Strictly positive. Account currency must match the payment/transaction currency.']
+
+  indexes {
+    transaction_id
+    account_id
+  }
+
+  Note: 'Every ledger transaction must balance total Debit = total Credit. Future posting workflow must validate and commit all lines plus payment state atomically; schema alone does not enforce cross-row balance.'
+}
+
+Ref ledger_transaction_payment: PaymentDB.ledger_transactions.payment_id > PaymentDB.payments.id [delete: no action, update: no action]
+Ref ledger_entry_transaction: PaymentDB.ledger_entries.transaction_id > PaymentDB.ledger_transactions.id [delete: no action, update: no action]
+Ref ledger_entry_account: PaymentDB.ledger_entries.account_id > PaymentDB.ledger_accounts.id [delete: no action, update: no action]
+
+TableGroup AuthDB_PostgreSQL {
+  AuthDB.users
+  AuthDB.roles
+  AuthDB.user_roles
+  AuthDB.otp_challenges
+  AuthDB.auth_sessions
+  AuthDB.refresh_tokens
+}
+
+TableGroup PaymentDB_PostgreSQL {
+  PaymentDB.payments
+  PaymentDB.ledger_accounts
+  PaymentDB.ledger_transactions
+  PaymentDB.ledger_entries
+}
