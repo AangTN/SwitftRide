@@ -1,9 +1,15 @@
 # Demo deployment: keeps the simulated OTP and seed data from compose.yml.
 services:
+  postgres:
+    restart: unless-stopped
+  rabbitmq:
+    restart: unless-stopped
   sqlserver:
+    restart: unless-stopped
     environment:
       MSSQL_MEMORY_LIMIT_MB: "1536"
   mongo:
+    restart: unless-stopped
     # Fresh VPS database: MongoDB 8 cannot start on this Ubuntu kernel.
     image: mongo:7.0.45
     command: [mongod, --wiredTigerCacheSizeGB, "0.25"]
