@@ -1,5 +1,10 @@
 # Demo deployment: keeps the simulated OTP and seed data from compose.yml.
 services:
+  sqlserver:
+    environment:
+      MSSQL_MEMORY_LIMIT_MB: "1536"
+  mongo:
+    command: [mongod, --wiredTigerCacheSizeGB, "0.25"]
   auth:
     image: ${REGISTRY_PREFIX}/auth:${DEPLOY_TAG}
   trip:
