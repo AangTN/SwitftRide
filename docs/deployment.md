@@ -40,6 +40,12 @@ IP certificates expire after roughly six days. Install a systemd timer to run
 validation and reloads Nginx. Keep port 80 open for certificate validation.
 Monitor failures with `journalctl -u swiftride-tls.service`.
 
+```bash
+sudo cp deploy/swiftride-tls.service deploy/swiftride-tls.timer /etc/systemd/system/
+sudo systemctl daemon-reload
+sudo systemctl enable --now swiftride-tls.timer
+```
+
 ## GitHub Actions
 
 The workflow runs backend tests and Flutter checks, builds images on GitHub runners,
