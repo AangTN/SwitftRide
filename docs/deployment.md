@@ -55,7 +55,10 @@ sudo systemctl enable --now swiftride-tls.timer
 
 The workflow runs backend tests and Flutter checks, builds images on GitHub runners,
 pushes them to GHCR, and deploys only after both build jobs pass. Each release uses
-its full commit SHA as the image tag. VPS builds are not required.
+its full commit SHA as the image tag. VPS builds are not required. After Flutter builds, `scripts/version-web-build.py`
+assigns content-versioned URLs to the JavaScript entrypoint and assets (including
+icon fonts). Nginx revalidates static responses so clients do not mix a new app
+with an older cached font. The legacy `/rider/` URL redirects to `/`.
 
 Configure repository Actions secrets:
 

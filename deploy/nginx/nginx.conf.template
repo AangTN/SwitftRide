@@ -23,6 +23,7 @@ server {
     root /usr/share/nginx/html;
     index index.html;
     client_max_body_size 10m;
+    add_header Cache-Control "no-cache" always;
 
     resolver 127.0.0.11 valid=10s ipv6=off;
     set $gateway http://gateway:8080;
@@ -35,6 +36,13 @@ server {
         proxy_set_header X-Forwarded-Proto $scheme;
         proxy_set_header Upgrade $http_upgrade;
         proxy_set_header Connection $connection_upgrade;
+    }
+    # Migrate the old rider path and retire any service worker scoped to it.
+    location = /rider { return 308 /; }
+    location = /rider/ { return 308 /; }
+    location = /rider/flutter_service_worker.js {
+        alias /usr/share/nginx/html/flutter_service_worker.js;
+        add_header Cache-Control "no-store" always;
     }
     location = /driver { return 308 /driver/; }
     location /driver/ { try_files $uri $uri/ /driver/index.html; }
