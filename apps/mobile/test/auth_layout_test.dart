@@ -89,7 +89,7 @@ void main() {
         );
         await tester.runAsync(
           () => precacheImage(
-            AssetImage('assets/images/${role.name}-hero.png'),
+            AssetImage('assets/images/${role.name}-hero.webp'),
             capture.currentContext!,
           ),
         );

@@ -52,12 +52,23 @@ jobs:
           cache: true
       - name: Check and build both apps
         working-directory: apps/mobile
+        env:
+          GOONG_MAPTILES_KEY: ${{ secrets.GOONG_MAPTILES_KEY }}
         run: |
+          set -euo pipefail
+          if [[ -z "$GOONG_MAPTILES_KEY" ]]; then
+            echo 'Missing repository Actions secret GOONG_MAPTILES_KEY.' >&2
+            exit 1
+          fi
+          map_config="$RUNNER_TEMP/swiftride-map.json"
+          trap 'rm -f "$map_config"' EXIT
+          python3 -c 'import json, os; from pathlib import Path; Path(os.environ["RUNNER_TEMP"], "swiftride-map.json").write_text(json.dumps({"GOONG_MAPTILES_KEY": os.environ["GOONG_MAPTILES_KEY"]}))'
+          chmod 600 "$map_config"
           flutter pub get
           flutter analyze
           flutter test
-          flutter build web --target lib/main_rider.dart --output build/web-rider --no-web-resources-cdn
-          flutter build web --target lib/main_driver.dart --output build/web-driver --base-href /driver/ --no-web-resources-cdn
+          flutter build web --target lib/main_rider.dart --output build/web-rider --no-web-resources-cdn --dart-define-from-file="$map_config"
+          flutter build web --target lib/main_driver.dart --output build/web-driver --base-href /driver/ --no-web-resources-cdn --dart-define-from-file="$map_config"
           cp ../../deploy/nginx/nginx.conf.template nginx.conf.template
       - uses: docker/setup-buildx-action@v3
       - uses: docker/login-action@v3

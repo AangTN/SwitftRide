@@ -59,6 +59,13 @@ its full commit SHA as the image tag. VPS builds are not required.
 
 Configure repository Actions secrets:
 
+- `GOONG_MAPTILES_KEY`: Goong Maptiles key used when building both Flutter apps.
+  The web job requires this secret and passes only this key through a temporary
+  JSON file. The key is bundled in the browser app; adding it to the VPS `.env`
+  alone does not change an existing build. Configure the key's URL restrictions
+  for the deployed HTTPS origin. `GOONG_API_KEY` is not used yet and must not be
+  passed to Flutter; future server-side address/routing calls should load it
+  from the VPS environment.
 - `DEPLOY_HOST`: static public IP matching the certificate.
 - `DEPLOY_SSH_KEY`: dedicated SSH private key authorized for the deploy user.
 - `DEPLOY_KNOWN_HOSTS`: verified SSH host key line for the server.

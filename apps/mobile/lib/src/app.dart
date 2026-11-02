@@ -2,6 +2,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'auth.dart';
+import 'rider_home.dart';
 
 const green = Color(0xFF00B650);
 const ink = Color(0xFF102237);
@@ -25,6 +26,10 @@ class SwiftRideApp extends StatelessWidget {
         surface: Colors.white,
       ),
       scaffoldBackgroundColor: Colors.white,
+      bottomSheetTheme: const BottomSheetThemeData(
+        dragHandleColor: Color(0xFFC6CBD3),
+        dragHandleSize: Size(38, 4),
+      ),
       textTheme: const TextTheme(
         bodyMedium: TextStyle(color: ink),
         bodyLarge: TextStyle(color: ink),
@@ -301,37 +306,64 @@ class _AuthScreenState extends State<AuthScreen> {
   }
 
   @override
-  Widget build(BuildContext context) => Scaffold(
-    backgroundColor: const Color(0xFFF0F6F2),
-    body: restoring
-        ? const Center(child: CircularProgressIndicator())
-        : LayoutBuilder(
-            builder: (context, constraints) => Align(
-              alignment: Alignment.topCenter,
-              child: SizedBox(
-                width: constraints.maxWidth.clamp(0, 430),
-                child: ColoredBox(
-                  color: Colors.white,
-                  child: user == null
-                      ? SafeArea(
-                          child: LayoutBuilder(
-                            builder: (context, phoneConstraints) =>
-                                _authContent(phoneConstraints.maxHeight),
-                          ),
-                        )
-                      : SingleChildScrollView(
-                          child: ConstrainedBox(
-                            constraints: BoxConstraints(
-                              minHeight: constraints.maxHeight,
-                            ),
-                            child: _profileContent(),
-                          ),
-                        ),
-                ),
+  Widget build(BuildContext context) {
+    if (!restoring && user != null && !driver) {
+      return Scaffold(
+        backgroundColor: const Color(0xFFF0F6F2),
+        body: Center(
+          child: ConstrainedBox(
+            constraints: const BoxConstraints(maxWidth: 430),
+            // Keep modal barriers inside the same phone frame as the home page.
+            child: ClipRect(
+              child: Navigator(
+                pages: [
+                  MaterialPage<void>(
+                    key: const ValueKey('rider-home'),
+                    child: RiderHome(
+                      fullName: user!.fullName,
+                      account: _profileContent(),
+                    ),
+                  ),
+                ],
+                onDidRemovePage: (_) {},
               ),
             ),
           ),
-  );
+        ),
+      );
+    }
+    return Scaffold(
+      backgroundColor: const Color(0xFFF0F6F2),
+      body: restoring
+          ? const Center(child: CircularProgressIndicator())
+          : LayoutBuilder(
+              builder: (context, constraints) => Align(
+                alignment: Alignment.topCenter,
+                child: SizedBox(
+                  width: constraints.maxWidth.clamp(0, 430),
+                  child: ColoredBox(
+                    color: Colors.white,
+                    child: user == null
+                        ? SafeArea(
+                            child: LayoutBuilder(
+                              builder: (context, phoneConstraints) =>
+                                  _authContent(phoneConstraints.maxHeight),
+                            ),
+                          )
+                        : SingleChildScrollView(
+                            child: ConstrainedBox(
+                              constraints: BoxConstraints(
+                                minHeight: constraints.maxHeight,
+                              ),
+                              child: _profileContent(),
+                            ),
+                          ),
+                  ),
+                ),
+              ),
+            ),
+    );
+  }
 
   Widget _authContent(double height) {
     final compact = height < 700;
@@ -355,7 +387,7 @@ class _AuthScreenState extends State<AuthScreen> {
                         right: 0,
                         bottom: -24,
                         child: Image.asset(
-                          'assets/images/${driver ? 'driver' : 'rider'}-hero.png',
+                          'assets/images/${driver ? 'driver' : 'rider'}-hero.webp',
                           fit: BoxFit.cover,
                           alignment: Alignment.topCenter,
                           errorBuilder: (_, error, stack) => Container(
@@ -968,7 +1000,7 @@ class _AuthScreenState extends State<AuthScreen> {
           ClipRRect(
             borderRadius: BorderRadius.circular(20),
             child: Image.asset(
-              'assets/images/${driver ? 'driver' : 'rider'}-hero.png',
+              'assets/images/${driver ? 'driver' : 'rider'}-hero.webp',
               height: 155,
               width: double.infinity,
               fit: BoxFit.cover,

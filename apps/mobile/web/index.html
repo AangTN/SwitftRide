@@ -31,6 +31,11 @@
   <!-- Favicon -->
   <link rel="icon" type="image/svg+xml" href="swiftride.svg"/>
 
+  <!-- Keep map controls inside the map layer, below Flutter sheets. -->
+  <style>
+    .maplibregl-map { isolation: isolate; z-index: 0; }
+    .maplibregl-ctrl-attrib { display: none !important; }
+  </style>
   <title>SwiftRide</title>
   <link rel="manifest" href="manifest.json">
 </head>

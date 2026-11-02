@@ -48,7 +48,10 @@ void main() {
       await tester.tap(find.widgetWithText(FilledButton, 'Đăng nhập'));
       await tester.pumpAndSettle();
       expect(find.widgetWithText(TextFormField, 'Họ và tên'), findsOneWidget);
-      expect(find.textContaining('đăng ký tài khoản khách hàng'), findsOneWidget);
+      expect(
+        find.textContaining('đăng ký tài khoản khách hàng'),
+        findsOneWidget,
+      );
       expect(find.byKey(const Key('otp')), findsNothing);
       expect(api.session, isNull);
       await tester.enterText(
@@ -61,6 +64,20 @@ void main() {
       await tester.enterText(find.byKey(const Key('otp')), '123456');
       await tester.ensureVisible(find.text('Xác nhận'));
       await tester.tap(find.text('Xác nhận'));
+      await tester.pumpAndSettle();
+      expect(find.text('Trang chủ'), findsOneWidget);
+      await tester.tap(find.text('Bạn muốn đi đâu?'));
+      await tester.pumpAndSettle();
+      // The modal dims only the centered phone frame, leaving both gutters unchanged.
+      final barrier = tester.getRect(find.byType(ModalBarrier).last);
+      expect(barrier.width, 430);
+      expect(
+        barrier.center.dx,
+        tester.view.physicalSize.width / tester.view.devicePixelRatio / 2,
+      );
+      await tester.tap(find.byTooltip('Đóng'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Tài khoản'));
       await tester.pumpAndSettle();
       expect(find.text('Đăng nhập thành công'), findsOneWidget);
       expect(api.session!.user.roles, containsAll(['Driver', 'Rider']));
@@ -129,6 +146,14 @@ void main() {
       await tester.ensureVisible(find.text('Xác nhận'));
       await tester.tap(find.text('Xác nhận'));
       await tester.pumpAndSettle();
+      if (role == AppRole.rider) {
+        expect(find.text('Trang chủ'), findsOneWidget);
+        expect(find.text('Đặt xe ngay'), findsNothing);
+        await tester.tap(find.text('Tài khoản'));
+        await tester.pumpAndSettle();
+      } else {
+        expect(find.text('Trang chủ'), findsNothing);
+      }
       expect(find.text('Đăng nhập thành công'), findsOneWidget);
       expect(tester.takeException(), isNull);
       await tester.ensureVisible(find.text('Đăng xuất'));
