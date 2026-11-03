@@ -15,6 +15,10 @@ Matching và Gateway, với JWT của phiên đăng nhập hiện có. GOONG_API
 - Các API geocode/reverse hiện có vẫn được giữ cho nhu cầu khác, nhưng luồng
   Rider này không dùng chúng khi chọn địa điểm hoặc bấm Áp dụng.
 - Không có migration DB hoặc biến môi trường mới. Dùng GOONG_API_KEY đã có.
+  Khi deploy qua GitHub Actions, đặt thêm repository secret `GOONG_API_KEY`.
+  Workflow truyền qua SSH stdin vào `.secrets/goong-api-key` (quyền 600) trên
+  VPS; release.sh nạp vào môi trường Compose cho Matching. Key này không đi
+  vào web build và không được in ra log. `GOONG_MAPTILES_KEY` vẫn là key khác.
 
 ## Luồng app
 

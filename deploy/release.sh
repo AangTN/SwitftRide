@@ -6,6 +6,15 @@ export DEPLOY_TAG="$1"
 export PUBLIC_HOST="${2:?Public IP required}"
 export REGISTRY_PREFIX="ghcr.io/aangtn/switftride"
 bash deploy/initialize-demo.sh
+# Shell environment takes precedence over .env for Compose interpolation.
+# The REST key is provisioned over SSH stdin and is never put in frontend builds.
+if [[ -f .secrets/goong-api-key ]]; then
+    export GOONG_API_KEY="$(cat .secrets/goong-api-key)"
+    if [[ -z "$GOONG_API_KEY" ]]; then
+        echo 'Matching requires a non-empty Goong REST key.' >&2
+        exit 1
+    fi
+fi
 compose=(docker compose -f compose.yml -f compose.deploy.yml)
 "${compose[@]}" pull
 "${compose[@]}" up -d --no-build --wait --wait-timeout 360

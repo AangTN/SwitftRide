@@ -105,6 +105,17 @@ jobs:
           tar czf /tmp/swiftride-deploy.tgz compose.yml compose.deploy.yml deploy
           scp /tmp/swiftride-deploy.tgz "ubuntu@$HOST:/opt/swiftride/deploy.tgz"
           ssh "ubuntu@$HOST" 'cd /opt/swiftride && tar xzf deploy.tgz && rm deploy.tgz'
+      - name: Configure Matching place lookup
+        env:
+          HOST: ${{ secrets.DEPLOY_HOST }}
+          GOONG_API_KEY: ${{ secrets.GOONG_API_KEY }}
+        run: |
+          set -euo pipefail
+          if [[ -z "$GOONG_API_KEY" ]]; then
+            echo 'Missing repository Actions secret GOONG_API_KEY.' >&2
+            exit 1
+          fi
+          printf '%s' "$GOONG_API_KEY" | ssh "ubuntu@$HOST" 'umask 077; mkdir -p /opt/swiftride/.secrets; cat > /opt/swiftride/.secrets/goong-api-key; chmod 600 /opt/swiftride/.secrets/goong-api-key'
       - name: Deploy images
         env:
           HOST: ${{ secrets.DEPLOY_HOST }}
