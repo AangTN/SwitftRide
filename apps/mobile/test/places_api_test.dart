@@ -32,7 +32,7 @@ void main() {
           return reply({
             'placeId': 'campus/+==',
             'name': 'Đại học Sài Gòn',
-            'formattedAddress': '273 An Dương Vương, Quận 5',
+            'formattedAddress': '273 An Dương Vương, Chợ Quán, Hồ Chí Minh',
             'latitude': 10.759,
             'longitude': 106.682,
           });
@@ -44,7 +44,7 @@ void main() {
       final suggestions = await api.search('Đại học Sài Gòn');
       final place = await api.details(suggestions.single.placeId);
       expect(place.name, 'Đại học Sài Gòn');
-      expect(place.address, '273 An Dương Vương, Quận 5');
+      expect(place.address, '273 An Dương Vương, Chợ Quán, Hồ Chí Minh');
       expect(place.point!.latitude, 10.759);
       expect(place.point!.longitude, closeTo(106.682, 1e-10));
       expect(place.isResolved, isTrue);

@@ -12,39 +12,25 @@ export 'places_api.dart' show RidePlace;
 const _selectionGreen = Color(0xFF00B53E);
 const _bookingAccent = Color(0xFF00A83B);
 
-const mockRecentDestinations = [
-  RidePlace(
-    'Landmark 81',
-    '720A Điện Biên Phủ, Bình Thạnh, TP. HCM',
-    LatLng(10.7952, 106.7218),
-  ),
-  RidePlace(
-    'Sân bay Tân Sơn Nhất',
-    'Đường Trường Sơn, Tân Bình, TP. HCM',
-    LatLng(10.8134, 106.6627),
-  ),
-  RidePlace(
-    'Crescent Mall',
-    '101 Tôn Dật Tiên, Quận 7, TP. HCM',
-    LatLng(10.7286, 106.7186),
-  ),
-];
-
+// Canonical addresses/coordinates verified against Goong V2. No fake history.
 const suggestedDestinations = [
   RidePlace(
     'Chợ Bến Thành',
-    'Đường Lê Lợi, Quận 1, TP. HCM',
-    LatLng(10.7725, 106.6980),
+    'Chợ Bến Thành, Bến Thành, Hồ Chí Minh',
+    LatLng(10.77253621500006, 106.69798153800008),
+    'vYi6sWSfKrJwsnANYU1CNgGU5j8SqSm_haRliJr1ze8Vko4g5hRSmxFKZVUS3F5yCZ5lnD6oXrINWgE0uhsCwh36aVSQUgZzmZKBWQoBwgOllmkUWthaQgGeyTT2IF_uA',
   ),
   RidePlace(
     'Nhà thờ Đức Bà',
-    'Công xã Paris, Quận 1, TP. HCM',
-    LatLng(10.7798, 106.6990),
+    'Nhà thờ Sài Gòn, 1 Công Xã Paris, Sài Gòn, Hồ Chí Minh',
+    LatLng(10.779761528000051, 106.69907017200006),
+    'RaqIuKFMpB51unBruwyS414qXXRy6KISKb6RdaaFJbOmAzEEdv09p2GHNfB6_LLLXaWpBuI4X-9BYQl1o8xPz8nW0e3q2Svf0bKhegIjhiHhtkk0evjWYiG-6RR-XMYjI',
   ),
   RidePlace(
     'Phố đi bộ Nguyễn Huệ',
-    'Đường Nguyễn Huệ, Quận 1, TP. HCM',
-    LatLng(10.7743, 106.7031),
+    'Phố đi bộ Nguyễn Huệ, Nguyễn Huệ, Sài Gòn, Hồ Chí Minh',
+    LatLng(10.774097806000043, 106.70363123800007),
+    'anSmTAp0irBdzlM1um7D8R-4cTuMa9WKW84kFLl5wo5HbkcuoXnhuGjOUzO9lI31HalQT7R44qxjtnK4B0POpGiUfa6C9R-yKbqpcSIp644JvkE8cvBya8W1HuDeKHcqV',
   ),
 ];
 

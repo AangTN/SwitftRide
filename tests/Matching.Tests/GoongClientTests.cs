@@ -13,16 +13,77 @@ namespace SwiftRide.Matching.Tests;
 public sealed class GoongClientTests
 {
     [Fact]
+    public async Task Forward_geocoding_uses_current_units_even_for_an_old_address_query()
+    {
+        var (client, http) = CreateClient(request =>
+        {
+            Assert.Equal("/v2/geocode", request.RequestUri!.AbsolutePath);
+            var query = QueryHelpers.ParseQuery(request.RequestUri.Query);
+            Assert.Equal("273 An Dương Vương, Quận 5", query["address"]);
+            Assert.Equal("false", query["has_deprecated_administrative_unit"]);
+            return JsonResponse("""
+                {"status":"OK","results":[{"formatted_address":"273 An Dương Vương, Chợ Quán, Hồ Chí Minh",
+                "deprecated_description":"273 An Dương Vương, Quận 5, Hồ Chí Minh",
+                "place_id":"v2-campus","geometry":{"location":{"lat":10.759,"lng":106.682}}}]}
+                """);
+        });
+        using (http)
+        {
+            var result = await client.GeocodeAsync("273 An Dương Vương, Quận 5", default);
+            Assert.NotNull(result);
+            Assert.Equal("273 An Dương Vương, Chợ Quán, Hồ Chí Minh", result.FormattedAddress);
+            Assert.Equal("v2-campus", result.PlaceId);
+        }
+    }
+
+    [Theory]
+    [InlineData("Motorbike", "bike")]
+    [InlineData("Car4Seats", "car")]
+    public async Task Pricing_routes_use_V2_and_keep_vehicle_and_metrics(string vehicle, string expectedProviderVehicle)
+    {
+        var (client, http) = CreateClient(request =>
+        {
+            Assert.Equal("/v2/direction", request.RequestUri!.AbsolutePath);
+            var query = QueryHelpers.ParseQuery(request.RequestUri.Query);
+            Assert.Equal(expectedProviderVehicle, query["vehicle"]);
+            Assert.Equal("10.759,106.682", query["origin"]);
+            return JsonResponse("""
+                {"routes":[{"legs":[{"distance":{"value":4800},"duration":{"value":900},
+                "start_address":"Chợ Quán, Hồ Chí Minh","end_address":"Bến Thành, Hồ Chí Minh"}]}]}
+                """);
+        });
+        using (http)
+        {
+            var route = await client.GetRouteAsync(10.759, 106.682, 10.7725, 106.698, vehicle, default);
+            Assert.Equal(4800, route.DistanceMeters);
+            Assert.Equal(900, route.DurationSeconds);
+        }
+    }
+
+    [Theory]
+    [InlineData("""{"error":"No route","code":400}""")]
+    [InlineData("""{"routes":[]}""")]
+    [InlineData("""{"status":"ZERO_RESULTS","routes":[]}""")]
+    public async Task Directions_without_valid_routes_never_produce_a_quote(string body)
+    {
+        var (client, http) = CreateClient(_ => JsonResponse(body));
+        using (http)
+            await Assert.ThrowsAsync<SwiftRide.Matching.Application.MatchingFailureException>(() =>
+                client.GetRouteAsync(10.759, 106.682, 10.7725, 106.698, "Motorbike", default));
+    }
+
+    [Fact]
     public async Task Details_preserve_the_selected_place_id_address_and_coordinates()
     {
         const string id = "campus/+==";
         var (client, http) = CreateClient(request =>
         {
-            Assert.Equal("/Place/Detail", request.RequestUri!.AbsolutePath);
+            Assert.Equal("/v2/place/detail", request.RequestUri!.AbsolutePath);
             Assert.Equal(id, QueryHelpers.ParseQuery(request.RequestUri.Query)["place_id"]);
+            Assert.Equal("false", QueryHelpers.ParseQuery(request.RequestUri.Query)["has_deprecated_administrative_unit"]);
             return JsonResponse("""
                 {"status":"OK","result":{"place_id":"campus/+==","name":"Đại học Sài Gòn",
-                "formatted_address":"273 An Dương Vương, Quận 5","geometry":{"location":{"lat":10.759,"lng":106.682}}}}
+                "deprecated_description":"273 An Dương Vương, Quận 5","formatted_address":"273 An Dương Vương, Chợ Quán, Hồ Chí Minh","geometry":{"location":{"lat":10.759,"lng":106.682}}}}
                 """);
         });
         using (http)
@@ -30,7 +91,7 @@ public sealed class GoongClientTests
             var place = await client.GetPlaceDetailsAsync(id, default);
             Assert.NotNull(place);
             Assert.Equal(id, place.PlaceId);
-            Assert.Equal("273 An Dương Vương, Quận 5", place.FormattedAddress);
+            Assert.Equal("273 An Dương Vương, Chợ Quán, Hồ Chí Minh", place.FormattedAddress);
             Assert.Equal(10.759, place.Latitude);
             Assert.Equal(106.682, place.Longitude);
         }
@@ -67,7 +128,7 @@ public sealed class GoongClientTests
         {
             capturedRequest = request;
             return JsonResponse("""
-                {"status":"OK","results":[{"formatted_address":"District 1, Ho Chi Minh City","place_id":"place-1",
+                {"status":"OK","results":[{"deprecated_description":"Quận 1, Hồ Chí Minh","formatted_address":"Bến Thành, Hồ Chí Minh","place_id":"place-1",
                 "geometry":{"location":{"lat":10.5,"lng":106.7}}}]}
                 """);
         });
@@ -76,12 +137,14 @@ public sealed class GoongClientTests
             var result = await client.ReverseGeocodeAsync(10.5, 106.7, CancellationToken.None);
 
             Assert.NotNull(result);
-            Assert.Equal("District 1, Ho Chi Minh City", result.FormattedAddress);
+            Assert.Equal("Bến Thành, Hồ Chí Minh", result.FormattedAddress);
             Assert.Equal(10.5, result.Latitude);
             Assert.Equal(106.7, result.Longitude);
             Assert.Equal("place-1", result.PlaceId);
             Assert.NotNull(capturedRequest);
             var query = QueryHelpers.ParseQuery(capturedRequest.RequestUri!.Query);
+            Assert.Equal("/v2/geocode", capturedRequest.RequestUri.AbsolutePath);
+            Assert.Equal("false", query["has_deprecated_administrative_unit"]);
             Assert.Equal("10.5,106.7", query["latlng"]);
             Assert.Equal("test-goong-key", query["api_key"]);
         }
@@ -95,19 +158,20 @@ public sealed class GoongClientTests
         {
             capturedRequest = request;
             return JsonResponse("""
-                {"status":"OK","predictions":[{"description":"District 1, Ho Chi Minh City","place_id":"place-1"}]}
+                {"status":"OK","predictions":[{"deprecated_description":"Quận 1, Hồ Chí Minh","description":"Bến Thành, Hồ Chí Minh","place_id":"place-1"}]}
                 """);
         });
         using (httpClient)
         {
-            var results = await client.SearchPlacesAsync("Quận 1", CancellationToken.None);
+            var results = await client.SearchPlacesAsync("Bến Thành", CancellationToken.None);
 
             var suggestion = Assert.Single(results);
-            Assert.Equal("District 1, Ho Chi Minh City", suggestion.Description);
+            Assert.Equal("Bến Thành, Hồ Chí Minh", suggestion.Description);
             Assert.Equal("place-1", suggestion.PlaceId);
             Assert.NotNull(capturedRequest);
-            Assert.Equal("/Place/AutoComplete", capturedRequest.RequestUri!.AbsolutePath);
-            Assert.Equal("Quận 1", QueryHelpers.ParseQuery(capturedRequest.RequestUri.Query)["input"]);
+            Assert.Equal("/v2/place/autocomplete", capturedRequest.RequestUri!.AbsolutePath);
+            Assert.Equal("Bến Thành", QueryHelpers.ParseQuery(capturedRequest.RequestUri.Query)["input"]);
+            Assert.Equal("false", QueryHelpers.ParseQuery(capturedRequest.RequestUri.Query)["has_deprecated_administrative_unit"]);
         }
     }
 

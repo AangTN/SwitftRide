@@ -82,6 +82,8 @@ Khách tạo chuyến qua Trip với điểm đón/đến và `vehicleType` (`Mo
 
 Đặt `GOONG_API_KEY` trong `.env` để bật tra địa chỉ và định tuyến. Compose chỉ chuyển khóa cho Matching backend; không đưa khóa này vào Flutter. Khi chưa cấu hình, API Goong trả lỗi `503 goong_not_configured` thay vì ước lượng tuyến/giá giả. Có thể chỉnh bán kính tìm kiếm, thời hạn vị trí/khóa/báo giá và đơn giá trong cấu hình `Matching`/`Pricing` của Matching.
 
+Tìm kiếm, chi tiết địa điểm, geocode/reverse và định tuyến đều dùng Goong V2 để trả địa chỉ theo đơn vị hành chính mới. Các gợi ý có sẵn cũng đã cập nhật; chi tiết trong [docs/place-search.md](docs/place-search.md).
+
 Matching chỉ sở hữu hồ sơ, vị trí/trạng thái tài xế, khóa, báo giá và công việc tích hợp MongoDB; không đọc/ghi trực tiếp TripDB. Trip có API xác nhận/nhận/từ chối chuyến, phát lệnh xác nhận/giải phóng tài xế qua Outbox. Matching chuyển GPS cho Trip để báo đúng khách qua SignalR. Chi tiết API, retry, migration và phần frontend cần nối: [docs/matching-integration.md](docs/matching-integration.md).
 
 ## Chạy service bằng .NET trên máy

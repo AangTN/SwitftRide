@@ -10,8 +10,8 @@ Matching và Gateway, với JWT của phiên đăng nhập hiện có. GOONG_API
   `{ description, placeId }`.
 - **Mới:** GET `/api/matching/places/details?placeId=...`: role Rider/Driver;
   trả `{ placeId, name, formattedAddress, latitude, longitude }`, hoặc 404
-  khi không còn kết quả. Matching gọi Goong Place/Detail bằng đúng place_id.
-  Căn cứ định dạng: https://document.goong.io/tutorial-Places.html
+  khi không còn kết quả. Matching gọi Goong V2 Place Detail bằng đúng place_id.
+  Căn cứ định dạng: https://help.goong.io/kb/rest-api-v2/place-detail-rest-api-v2/place-detail-place-detail-v2/
 - Các API geocode/reverse hiện có vẫn được giữ cho nhu cầu khác, nhưng luồng
   Rider này không dùng chúng khi chọn địa điểm hoặc bấm Áp dụng.
 - Không có migration DB hoặc biến môi trường mới. Dùng GOONG_API_KEY đã có.
@@ -51,3 +51,29 @@ một kết quả hay pin trùng tuyệt đối cổng đón.
 - Flutter: chọn riêng hai ô, sửa chữ làm mất tọa độ cũ, request cũ trả muộn,
   lỗi/thử lại, body Trip, token refresh, không gửi Goong key, bố cục ba cỡ điện thoại.
 - Không thay phần Driver GPS, SignalR, Matching, thanh toán hoặc schema Trip.
+
+## Địa chỉ hành chính mới
+
+Toàn bộ lời gọi REST của Goong chuyển sang V2, cùng key hiện có:
+
+| Nghiệp vụ | Endpoint Goong |
+|---|---|
+| Gợi ý tìm kiếm | `/v2/place/autocomplete` |
+| Chi tiết theo placeId | `/v2/place/detail` |
+| Địa chỉ → tọa độ | `/v2/geocode?address=...` |
+| Tọa độ → địa chỉ | `/v2/geocode?latlng=...` |
+| Định tuyến tính giá | `/v2/direction` |
+
+Các API địa chỉ gửi `has_deprecated_administrative_unit=false`, chỉ đọc trường
+`description` hoặc `formatted_address` chính thức, không dùng các trường
+`deprecated_description`, `deprecated_compound`. Không dự phòng về V1 khi V2 lỗi,
+không dùng regex xóa chữ Quận/Huyện hoặc tự đoán tên phường sau sáp nhập.
+
+Ba điểm đề xuất trong app dùng đúng địa chỉ và tọa độ đã kiểm chứng từ Goong V2:
+Chợ Bến Thành (Bến Thành), Nhà thờ Đức Bà (Sài Gòn), Phố đi bộ Nguyễn Huệ (Sài Gòn).
+Danh sách lịch sử giả chưa được sử dụng đã được bỏ. Địa chỉ/tọa độ đã chọn vẫn
+được giữ nguyên khi chuẩn bị body Trip, nên chuyến mới và thông tin chuyển cho
+tài xế dùng cùng dữ liệu mới. Snapshot các chuyến cũ trong DB là dữ liệu lịch sử,
+không bị ghi đè hoặc đổi tên phường bằng suy đoán. Không cần migration.
+
+Nguồn API: https://help.goong.io/kb/rest-api-v2/

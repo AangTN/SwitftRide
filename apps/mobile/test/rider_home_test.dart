@@ -60,7 +60,10 @@ void main() {
         expect(find.byTooltip('Dùng vị trí hiện tại'), findsNothing);
         await choose(tester, 'pickup-field', 'Đại học Sài Gòn');
         await choose(tester, 'destination-field', 'Chợ Bến Thành');
-        expect(find.text('273 An Dương Vương, Quận 5'), findsOneWidget);
+        expect(
+          find.text('273 An Dương Vương, Chợ Quán, Hồ Chí Minh'),
+          findsOneWidget,
+        );
         await tester.ensureVisible(find.text('7 chỗ'));
         await tester.tap(find.text('7 chỗ'));
         await tester.ensureVisible(find.text('Ví SwiftRide'));
@@ -74,9 +77,15 @@ void main() {
         final picker = tester.widget<RideLocationPicker>(
           find.byType(RideLocationPicker),
         );
-        expect(picker.pickup.address, '273 An Dương Vương, Quận 5');
+        expect(
+          picker.pickup.address,
+          '273 An Dương Vương, Chợ Quán, Hồ Chí Minh',
+        );
         expect(picker.pickup.point!.latitude, 10.759);
-        expect(picker.destination!.address, 'Đường Lê Lợi, Quận 1');
+        expect(
+          picker.destination!.address,
+          'Chợ Bến Thành, Bến Thành, Hồ Chí Minh',
+        );
         expect(picker.vehicleType, RideVehicleType.car7Seats);
         expect(picker.paymentMethod, RidePaymentMethod.swiftRideWallet);
         expect(
@@ -129,7 +138,10 @@ void main() {
         find.text('Vui lòng chọn điểm đón từ kết quả tìm kiếm.'),
         findsOneWidget,
       );
-      expect(find.text('273 An Dương Vương, Quận 5'), findsNothing);
+      expect(
+        find.text('273 An Dương Vương, Chợ Quán, Hồ Chí Minh'),
+        findsNothing,
+      );
       await tester.pumpWidget(const SizedBox());
     },
   );
@@ -208,7 +220,10 @@ void main() {
             .text,
         isEmpty,
       );
-      expect(find.text('273 An Dương Vương, Quận 5'), findsOneWidget);
+      expect(
+        find.text('273 An Dương Vương, Chợ Quán, Hồ Chí Minh'),
+        findsOneWidget,
+      );
       await tester.pumpWidget(const SizedBox());
     },
   );
@@ -300,13 +315,13 @@ Future<void> choose(WidgetTester tester, String field, String query) async {
 class FakePlaces implements PlaceLookup {
   static const pickup = RidePlace(
     'Đại học Sài Gòn',
-    '273 An Dương Vương, Quận 5',
+    '273 An Dương Vương, Chợ Quán, Hồ Chí Minh',
     LatLng(10.759, 106.682),
     'Đại học Sài Gòn',
   );
   static const destination = RidePlace(
     'Chợ Bến Thành',
-    'Đường Lê Lợi, Quận 1',
+    'Chợ Bến Thành, Bến Thành, Hồ Chí Minh',
     LatLng(10.7725, 106.698),
     'Chợ Bến Thành',
   );

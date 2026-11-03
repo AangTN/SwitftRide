@@ -15,7 +15,7 @@ public sealed class GoongClient(HttpClient client, IConfiguration configuration,
         string vehicleType, CancellationToken ct)
     {
         var vehicle = vehicleType == "Motorbike" ? "bike" : "car";
-        var uri = BuildUri("Direction", new Dictionary<string, string?>
+        var uri = BuildUri("v2/direction", new Dictionary<string, string?>
         {
             ["origin"] = Coordinate(originLatitude, originLongitude),
             ["destination"] = Coordinate(destinationLatitude, destinationLongitude),
@@ -25,7 +25,9 @@ public sealed class GoongClient(HttpClient client, IConfiguration configuration,
         var root = document.RootElement;
         if (root.ValueKind != JsonValueKind.Object)
             throw new MatchingFailureException(502, "goong_response_invalid", "The route provider returned an invalid response.");
-        EnsureSuccessfulStatus(root);
+        // Directions V2 can return routes without a top-level status. Validate
+        // an explicit status if present, then require valid route/leg metrics.
+        if (root.TryGetProperty("status", out _)) EnsureSuccessfulStatus(root);
         if (!root.TryGetProperty("routes", out var routes) || routes.ValueKind != JsonValueKind.Array ||
             routes.GetArrayLength() == 0 || routes[0].ValueKind != JsonValueKind.Object ||
             !routes[0].TryGetProperty("legs", out var legs) || legs.ValueKind != JsonValueKind.Array ||
@@ -44,14 +46,14 @@ public sealed class GoongClient(HttpClient client, IConfiguration configuration,
 
     public async Task<GeocodedAddress?> GeocodeAsync(string address, CancellationToken ct)
     {
-        var uri = BuildUri("Geocode", new Dictionary<string, string?> { ["address"] = address });
+        var uri = BuildAddressUri("v2/geocode", new Dictionary<string, string?> { ["address"] = address });
         using var document = await GetDocumentAsync(uri, ct);
         return ParseGeocodedAddress(document.RootElement);
     }
 
     public async Task<GeocodedAddress?> ReverseGeocodeAsync(double latitude, double longitude, CancellationToken ct)
     {
-        var uri = BuildUri("Geocode", new Dictionary<string, string?>
+        var uri = BuildAddressUri("v2/geocode", new Dictionary<string, string?>
         {
             ["latlng"] = Coordinate(latitude, longitude)
         });
@@ -61,7 +63,7 @@ public sealed class GoongClient(HttpClient client, IConfiguration configuration,
 
     public async Task<IReadOnlyList<PlaceSuggestion>> SearchPlacesAsync(string input, CancellationToken ct)
     {
-        var uri = BuildUri("Place/AutoComplete", new Dictionary<string, string?> { ["input"] = input });
+        var uri = BuildAddressUri("v2/place/autocomplete", new Dictionary<string, string?> { ["input"] = input });
         using var document = await GetDocumentAsync(uri, ct);
         var root = document.RootElement;
         if (root.ValueKind != JsonValueKind.Object)
@@ -88,7 +90,7 @@ public sealed class GoongClient(HttpClient client, IConfiguration configuration,
 
     public async Task<PlaceDetails?> GetPlaceDetailsAsync(string placeId, CancellationToken ct)
     {
-        var uri = BuildUri("Place/Detail", new Dictionary<string, string?> { ["place_id"] = placeId });
+        var uri = BuildAddressUri("v2/place/detail", new Dictionary<string, string?> { ["place_id"] = placeId });
         using var document = await GetDocumentAsync(uri, ct);
         var root = document.RootElement;
         if (root.ValueKind != JsonValueKind.Object)
@@ -135,6 +137,14 @@ public sealed class GoongClient(HttpClient client, IConfiguration configuration,
         {
             throw new MatchingFailureException(502, "goong_response_invalid", "The address provider returned an invalid response.");
         }
+    }
+
+    private string BuildAddressUri(string endpoint, Dictionary<string, string?> parameters)
+    {
+        // Canonical V2 fields use current administrative units. Do not request
+        // legacy descriptions or fall back to V1 when the provider is unavailable.
+        parameters["has_deprecated_administrative_unit"] = "false";
+        return BuildUri(endpoint, parameters);
     }
 
     private string BuildUri(string endpoint, Dictionary<string, string?> parameters)
