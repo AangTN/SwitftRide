@@ -10,8 +10,17 @@ public class PaymentDbContext(DbContextOptions<PaymentDbContext> options) : DbCo
     public DbSet<LedgerAccount> LedgerAccounts => Set<LedgerAccount>();
     public DbSet<LedgerTransaction> LedgerTransactions => Set<LedgerTransaction>();
     public DbSet<LedgerEntry> LedgerEntries => Set<LedgerEntry>();
+    public DbSet<PaymentOutboxMessage> OutboxMessages => Set<PaymentOutboxMessage>();
     protected override void OnModelCreating(ModelBuilder b)
     {
+        b.Entity<PaymentOutboxMessage>(e =>
+        {
+            e.ToTable("outbox_messages"); e.HasKey(x => x.Id);
+            e.Property(x => x.Kind).HasMaxLength(30);
+            e.Property(x => x.Status).HasConversion<string>().HasMaxLength(20);
+            e.Property(x => x.LastError).HasMaxLength(200);
+            e.HasIndex(x => new { x.Status, x.NextAttemptAt });
+        });
         b.Entity<PaymentEntity>(e =>
         {
             e.ToTable("payments", t => t.HasCheckConstraint("ck_payment_amount", "amount >= 0")); e.HasKey(x => x.Id);
@@ -20,6 +29,7 @@ public class PaymentDbContext(DbContextOptions<PaymentDbContext> options) : DbCo
             e.Property(x => x.IdempotencyKey).HasMaxLength(100); e.HasIndex(x => x.IdempotencyKey).IsUnique();
             e.HasIndex(x => x.TripId).IsUnique(); e.HasIndex(x => new { x.RiderId, x.CreatedAt });
             e.HasIndex(x => new { x.DriverId, x.CreatedAt });
+            e.Property(x => x.Method).HasMaxLength(30);
             e.Property(x => x.ProviderReference).HasMaxLength(200); e.Property(x => x.FailureCode).HasMaxLength(100);
         });
         b.Entity<LedgerAccount>(e =>

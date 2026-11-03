@@ -7,26 +7,13 @@ using SwiftRide.Trip.Infrastructure;
 namespace SwiftRide.Trip.Api;
 
 [ApiController, Route("internal/trips"), Authorize(Roles = "Service"), TypeFilter(typeof(TripExceptionFilter))]
-public sealed class PaymentCallbacksController(TripDbContext db, ITripRealtimePublisher realtime, TimeProvider clock) : ControllerBase
+public sealed class PaymentCallbacksController(TripPaymentResultHandler handler) : ControllerBase
 {
     [HttpPost("{tripId:guid}/payment-result")]
     public async Task<IActionResult> PaymentResult(Guid tripId, PaymentResultRequest request, CancellationToken ct)
     {
-        var trip = await db.Trips.Include(x => x.History).SingleOrDefaultAsync(x => x.Id == tripId, ct)
-            ?? throw new SwiftRide.ServiceDefaults.ApiFailure(404, "trip_not_found", "Trip was not found.");
-        if (!string.Equals(trip.PaymentId, request.PaymentId, StringComparison.Ordinal)) throw new SwiftRide.ServiceDefaults.ApiFailure(409, "payment_mismatch", "Payment does not belong to this trip.");
-        if (trip.Status == TripStatus.Paid && request.Status.Equals("Succeeded", StringComparison.OrdinalIgnoreCase)) return Ok();
-        if (trip.Status != TripStatus.PaymentPending) throw new SwiftRide.ServiceDefaults.ApiFailure(409, "payment_not_expected", "Trip is not awaiting payment.");
-        var status = request.Status?.ToLowerInvariant() switch
-        {
-            "succeeded" => "Succeeded", "failed" => "Failed", "pending" => "Pending", "processing" => "Processing",
-            _ => throw new SwiftRide.ServiceDefaults.ApiFailure(400, "invalid_payment_status", "Payment status is invalid.")
-        };
-        if (trip.PaymentStatus == status) return Ok();
-        trip.PaymentStatus = status;
-        if (status == "Succeeded") TripStateMachine.Move(trip, TripStatus.Paid, null, clock.GetUtcNow(), "payment_succeeded");
-        else { trip.StateVersion++; trip.UpdatedAt = clock.GetUtcNow(); }
-        await db.SaveChangesAsync(ct); await realtime.PublishTripChangedAsync(trip, ct); return Ok();
+        await handler.ApplyAsync(new SwiftRide.Contracts.Trips.PaymentResult(tripId, request.PaymentId, request.Status), ct);
+        return Ok();
     }
 }
 

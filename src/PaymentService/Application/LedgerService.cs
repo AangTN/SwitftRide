@@ -73,7 +73,9 @@ public sealed class LedgerService(IPaymentStore store) : ILedgerService
         if (platformFeeAmount < 0 || platformFeeAmount > payment.Amount)
             throw new ApiFailure(400, "invalid_platform_fee", "Platform fee cannot be negative or exceed total amount.");
 
-        var riderAccount = await EnsureUserWalletAccountAsync(payment.RiderId, payment.Currency, ct);
+        var riderAccount = payment.Method == "Wallet"
+            ? await EnsureUserWalletAccountAsync(payment.RiderId, payment.Currency, ct)
+            : await EnsureClearingAccountAsync(LedgerAccountCodes.PaymentClearing, payment.Currency, ct);
         var driverAccount = await EnsureDriverPayableAccountAsync(payment.DriverId, payment.Currency, ct);
         var driverAmount = payment.Amount - platformFeeAmount;
 
@@ -134,7 +136,9 @@ public sealed class LedgerService(IPaymentStore store) : ILedgerService
         if (payment.Amount <= 0)
             throw new ApiFailure(400, "invalid_amount", "Payment amount must be greater than zero.");
 
-        var riderAccount = await EnsureUserWalletAccountAsync(payment.RiderId, payment.Currency, ct);
+        var riderAccount = payment.Method == "Wallet"
+            ? await EnsureUserWalletAccountAsync(payment.RiderId, payment.Currency, ct)
+            : await EnsureClearingAccountAsync(LedgerAccountCodes.PaymentClearing, payment.Currency, ct);
         var driverAccount = await EnsureDriverPayableAccountAsync(payment.DriverId, payment.Currency, ct);
         var driverAmount = payment.Amount - platformFeeAmount;
 

@@ -28,7 +28,12 @@ public sealed class PaymentService(
         if (string.IsNullOrWhiteSpace(request.IdempotencyKey))
             throw new ApiFailure(400, "invalid_idempotency_key", "IdempotencyKey is required.");
 
+        request = request with { Currency = string.IsNullOrWhiteSpace(request.Currency) ? "VND" : request.Currency.Trim().ToUpperInvariant() };
         var key = request.IdempotencyKey.Trim();
+        if (key.Length > 100 || request.Currency.Length != 3) throw new ApiFailure(400, "invalid_payment_request", "Invalid key or currency.");
+        var gateway = gatewayFactory.GetGateway(request.PaymentMethod);
+        await using var tx = await store.BeginTransactionAsync(ct);
+        await store.LockTripAsync(request.TripId, ct);
 
         // 1. Check existing payment by idempotency key
         var existingByKey = await store.FindPaymentByIdempotencyKeyAsync(key, ct);
@@ -39,6 +44,7 @@ public sealed class PaymentService(
                 existingByKey.RiderId != request.RiderId ||
                 existingByKey.DriverId != request.DriverId ||
                 existingByKey.Amount != request.Amount ||
+                !string.Equals(existingByKey.Method, gateway.Method, StringComparison.OrdinalIgnoreCase) ||
                 !string.Equals(existingByKey.Currency, request.Currency, StringComparison.OrdinalIgnoreCase))
             {
                 logger.LogWarning("Idempotency conflict for key {Key}: parameter mismatch.", key);
@@ -47,26 +53,22 @@ public sealed class PaymentService(
             }
 
             logger.LogInformation("Idempotent replay for key {Key}, payment {PaymentId}", key, existingByKey.Id);
+            await tx.CommitAsync(ct);
             return MapToDto(existingByKey);
         }
 
-        // 2. Check if this trip already has a succeeded payment
+        // 2. A trip owns one payment; a new key cannot silently create another charge.
         var existingByTrip = await store.FindPaymentByTripIdAsync(request.TripId, ct);
-        if (existingByTrip is not null && existingByTrip.Status == PaymentStatus.Succeeded)
-        {
-            logger.LogInformation("Trip {TripId} already settled with payment {PaymentId}", request.TripId, existingByTrip.Id);
-            return MapToDto(existingByTrip);
-        }
+        if (existingByTrip is not null)
+            throw new ApiFailure(409, "trip_payment_exists", "This trip already has a payment. Reuse the original request key.");
 
-        var gateway = gatewayFactory.GetGateway(request.PaymentMethod);
+        await store.LockWalletAsync(request.RiderId, request.Currency, ct);
 
-        // 3. Begin Transaction
-        await using var tx = await store.BeginTransactionAsync(ct);
-
-        var now = DateTimeOffset.UtcNow;
+        var now = UtcNow();
         var payment = new Domain.Payment
         {
             Id = Guid.NewGuid(),
+            Method = gateway.Method,
             TripId = request.TripId,
             RiderId = request.RiderId,
             DriverId = request.DriverId,
@@ -115,20 +117,12 @@ public sealed class PaymentService(
             // Payment failed - record failure state in payment table, commit so it's not retried indefinitely
             payment.Status = PaymentStatus.Failed;
             payment.FailureCode = chargeResult.FailureCode ?? "charge_failed";
-            payment.UpdatedAt = DateTimeOffset.UtcNow;
+            payment.UpdatedAt = UtcNow();
 
             await store.UpdatePaymentAsync(payment, ct);
+            await eventPublisher.QueueResultAsync(payment, ct);
             await store.SaveChangesAsync(ct);
             await tx.CommitAsync(ct);
-
-            await eventPublisher.PublishFailedAsync(new PaymentFailedEvent(
-                payment.TripId,
-                payment.RiderId,
-                payment.DriverId,
-                payment.Amount,
-                payment.Currency,
-                payment.FailureCode,
-                chargeResult.FailureReason ?? "Payment processing failed."), ct);
 
             throw new ApiFailure(400, payment.FailureCode, chargeResult.FailureReason ?? "Payment processing failed.");
         }
@@ -141,24 +135,13 @@ public sealed class PaymentService(
 
         payment.Status = PaymentStatus.Succeeded;
         payment.ProviderReference = chargeResult.ProviderReference;
-        payment.PaidAt = DateTimeOffset.UtcNow;
-        payment.UpdatedAt = DateTimeOffset.UtcNow;
+        payment.PaidAt = UtcNow();
+        payment.UpdatedAt = UtcNow();
 
         await store.UpdatePaymentAsync(payment, ct);
+        await eventPublisher.QueueResultAsync(payment, ct);
         await store.SaveChangesAsync(ct);
         await tx.CommitAsync(ct);
-
-        var settledEvent = new PaymentSettledEvent(
-            payment.Id,
-            payment.TripId,
-            payment.RiderId,
-            payment.DriverId,
-            payment.Amount,
-            payment.Currency,
-            payment.PaidAt.Value,
-            payment.ProviderReference);
-
-        await eventPublisher.PublishSettledAsync(settledEvent, ct);
 
         logger.LogInformation("Payment {PaymentId} succeeded for Trip {TripId}, Amount: {Amount} {Currency}",
             payment.Id, payment.TripId, payment.Amount, payment.Currency);
@@ -172,6 +155,10 @@ public sealed class PaymentService(
 
         var payment = await store.FindPaymentByIdAsync(paymentId, ct)
             ?? throw new ApiFailure(404, "payment_not_found", $"Payment '{paymentId}' was not found.");
+
+        await store.LockTripAsync(payment.TripId, ct);
+        payment = (await store.FindPaymentByIdAsync(paymentId, ct))!;
+        await store.LockWalletAsync(payment.RiderId, payment.Currency, ct);
 
         if (payment.Status == PaymentStatus.Refunded)
         {
@@ -192,11 +179,13 @@ public sealed class PaymentService(
         var existingRefundTx = await store.FindLedgerTransactionByIdempotencyKeyAsync(refundKey, ct);
         if (existingRefundTx is not null)
         {
+            if (existingRefundTx.PaymentId != payment.Id || existingRefundTx.Type != LedgerTransactionTypes.Refund)
+                throw new ApiFailure(409, "refund_key_mismatch", "Refund key belongs to a different operation.");
             logger.LogInformation("Duplicate refund attempt with key {Key} for payment {PaymentId}", refundKey, paymentId);
             return MapToDto(payment);
         }
 
-        var gateway = gatewayFactory.GetGateway("Wallet");
+        var gateway = gatewayFactory.GetGateway(payment.Method);
         var refundResult = await gateway.RefundAsync(new PaymentRefundRequest(
             payment.Id,
             payment.TripId,
@@ -215,19 +204,13 @@ public sealed class PaymentService(
         var ledgerTx = await ledgerService.PostRefundAsync(payment, platformFee, refundKey, ct);
 
         payment.Status = PaymentStatus.Refunded;
-        payment.UpdatedAt = DateTimeOffset.UtcNow;
+        payment.UpdatedAt = UtcNow();
 
         await store.UpdatePaymentAsync(payment, ct);
+        await eventPublisher.QueueRefundedAsync(new PaymentRefundedEvent(
+            payment.Id, payment.TripId, payment.Amount, payment.Currency, ledgerTx.Id, UtcNow()), ct);
         await store.SaveChangesAsync(ct);
         await tx.CommitAsync(ct);
-
-        await eventPublisher.PublishRefundedAsync(new PaymentRefundedEvent(
-            payment.Id,
-            payment.TripId,
-            payment.Amount,
-            payment.Currency,
-            ledgerTx.Id,
-            DateTimeOffset.UtcNow), ct);
 
         logger.LogInformation("Payment {PaymentId} refunded successfully.", paymentId);
         return MapToDto(payment);
@@ -294,7 +277,14 @@ public sealed class PaymentService(
     public async Task<WalletBalanceDto> GetRiderWalletAsync(Guid riderId, string currency = "VND", CancellationToken ct = default)
     {
         var balance = await ledgerService.GetUserWalletBalanceAsync(riderId, currency, ct);
-        return new WalletBalanceDto(riderId, balance, currency, DateTimeOffset.UtcNow);
+        return new WalletBalanceDto(riderId, balance, currency, UtcNow());
+    }
+
+    private static DateTimeOffset UtcNow()
+    {
+        // PostgreSQL stores microseconds; return the same timestamp on initial response and replay.
+        var now = DateTimeOffset.UtcNow;
+        return new DateTimeOffset(now.Ticks - now.Ticks % 10, TimeSpan.Zero);
     }
 
     private static void ValidateAccess(Domain.Payment payment, Guid currentUserId, IReadOnlyList<string> roles)

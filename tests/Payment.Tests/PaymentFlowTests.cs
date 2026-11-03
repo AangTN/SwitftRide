@@ -12,6 +12,7 @@ namespace SwiftRide.Payment.Tests;
 public sealed class PaymentFlowTests : IAsyncLifetime
 {
     private readonly PaymentFactory _factory = new();
+    private HttpClient _serviceClient = null!;
     private HttpClient _adminClient = null!;
     private HttpClient _riderClient = null!;
     private HttpClient _driverClient = null!;
@@ -20,6 +21,7 @@ public sealed class PaymentFlowTests : IAsyncLifetime
     public async Task InitializeAsync()
     {
         await _factory.InitializeAsync(seed: true);
+        _serviceClient = _factory.CreateAuthorizedClient(Guid.NewGuid(), "Service");
         _adminClient = _factory.CreateAuthorizedClient(PaymentDevelopmentAccounts.AdminId, "Admin");
         _riderClient = _factory.CreateAuthorizedClient(PaymentDevelopmentAccounts.RiderId, "Rider");
         _driverClient = _factory.CreateAuthorizedClient(PaymentDevelopmentAccounts.DriverId, "Driver");
@@ -44,8 +46,8 @@ public sealed class PaymentFlowTests : IAsyncLifetime
             IdempotencyKey: key,
             PaymentMethod: "Wallet");
 
-        // Rider initiates payment
-        var response = await _riderClient.PostAsJsonAsync("/api/payments", request);
+        // Trusted service initiates payment
+        var response = await _serviceClient.PostAsJsonAsync("/api/payments", request);
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
 
         var payment = await response.Content.ReadFromJsonAsync<PaymentDto>();
@@ -94,8 +96,8 @@ public sealed class PaymentFlowTests : IAsyncLifetime
             IdempotencyKey: key,
             PaymentMethod: "Wallet");
 
-        // Broke rider initiates payment
-        var response = await _brokeRiderClient.PostAsJsonAsync("/api/payments", request);
+        // Trusted service charges the broke rider
+        var response = await _serviceClient.PostAsJsonAsync("/api/payments", request);
         Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
 
         // Check wallet balance is still 0
@@ -131,13 +133,13 @@ public sealed class PaymentFlowTests : IAsyncLifetime
             PaymentMethod: "Wallet");
 
         // Send 1
-        var response1 = await _riderClient.PostAsJsonAsync("/api/payments", request);
+        var response1 = await _serviceClient.PostAsJsonAsync("/api/payments", request);
         Assert.Equal(HttpStatusCode.OK, response1.StatusCode);
         var payment1 = await response1.Content.ReadFromJsonAsync<PaymentDto>();
         Assert.NotNull(payment1);
 
         // Send 2 (Identical replay)
-        var response2 = await _riderClient.PostAsJsonAsync("/api/payments", request);
+        var response2 = await _serviceClient.PostAsJsonAsync("/api/payments", request);
         Assert.Equal(HttpStatusCode.OK, response2.StatusCode);
         var payment2 = await response2.Content.ReadFromJsonAsync<PaymentDto>();
         Assert.NotNull(payment2);
@@ -168,12 +170,12 @@ public sealed class PaymentFlowTests : IAsyncLifetime
             IdempotencyKey: key,
             PaymentMethod: "Wallet");
 
-        var response1 = await _riderClient.PostAsJsonAsync("/api/payments", request1);
+        var response1 = await _serviceClient.PostAsJsonAsync("/api/payments", request1);
         Assert.Equal(HttpStatusCode.OK, response1.StatusCode);
 
         // Reusing same key with different amount
         var request2 = request1 with { Amount = 120_000m };
-        var response2 = await _riderClient.PostAsJsonAsync("/api/payments", request2);
+        var response2 = await _serviceClient.PostAsJsonAsync("/api/payments", request2);
         Assert.Equal(HttpStatusCode.Conflict, response2.StatusCode);
     }
 
@@ -194,7 +196,7 @@ public sealed class PaymentFlowTests : IAsyncLifetime
             PaymentMethod: "Wallet");
 
         // 1. Pay
-        var payResponse = await _riderClient.PostAsJsonAsync("/api/payments", request);
+        var payResponse = await _serviceClient.PostAsJsonAsync("/api/payments", request);
         Assert.Equal(HttpStatusCode.OK, payResponse.StatusCode);
         var payment = await payResponse.Content.ReadFromJsonAsync<PaymentDto>();
         Assert.NotNull(payment);
@@ -238,7 +240,7 @@ public sealed class PaymentFlowTests : IAsyncLifetime
             IdempotencyKey: $"ledger-balance-{Guid.NewGuid():N}",
             PaymentMethod: "Wallet");
 
-        var response = await _riderClient.PostAsJsonAsync("/api/payments", request);
+        var response = await _serviceClient.PostAsJsonAsync("/api/payments", request);
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
 
         // Query database directly and verify every single ledger transaction
@@ -303,12 +305,14 @@ public sealed class PaymentFlowTests : IAsyncLifetime
             IdempotencyKey: $"mockcard-{Guid.NewGuid():N}",
             PaymentMethod: "MockCard");
 
-        var response = await _riderClient.PostAsJsonAsync("/api/payments", cardRequest);
+        var response = await _serviceClient.PostAsJsonAsync("/api/payments", cardRequest);
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
         var payment = await response.Content.ReadFromJsonAsync<PaymentDto>();
         Assert.NotNull(payment);
         Assert.Equal("Succeeded", payment.Status);
         Assert.StartsWith("CARD-", payment.ProviderReference);
+        var wallet = await _riderClient.GetFromJsonAsync<WalletBalanceDto>("/api/payments/me/wallet");
+        Assert.Equal(PaymentDevelopmentAccounts.RiderDemoInitialBalance, wallet!.AvailableBalance);
 
         // 2. Card declined test (hook amount 888,888)
         var declinedRequest = cardRequest with
@@ -318,7 +322,7 @@ public sealed class PaymentFlowTests : IAsyncLifetime
             IdempotencyKey = $"card-declined-{Guid.NewGuid():N}"
         };
 
-        var declinedResponse = await _riderClient.PostAsJsonAsync("/api/payments", declinedRequest);
+        var declinedResponse = await _serviceClient.PostAsJsonAsync("/api/payments", declinedRequest);
         Assert.Equal(HttpStatusCode.BadRequest, declinedResponse.StatusCode);
     }
 
@@ -337,7 +341,7 @@ public sealed class PaymentFlowTests : IAsyncLifetime
                 IdempotencyKey: $"history-{i}-{Guid.NewGuid():N}",
                 PaymentMethod: "Wallet");
 
-            var resp = await _riderClient.PostAsJsonAsync("/api/payments", req);
+            var resp = await _serviceClient.PostAsJsonAsync("/api/payments", req);
             Assert.Equal(HttpStatusCode.OK, resp.StatusCode);
         }
 
@@ -369,7 +373,7 @@ public sealed class PaymentFlowTests : IAsyncLifetime
             IdempotencyKey: $"mockcard-timeout-{Guid.NewGuid():N}",
             PaymentMethod: "MockCard");
 
-        var response = await _riderClient.PostAsJsonAsync("/api/payments", timeoutRequest);
+        var response = await _serviceClient.PostAsJsonAsync("/api/payments", timeoutRequest);
         Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
 
         // Verify status in DB is recorded as Failed so timeout is distinguishable from pending/processing
@@ -394,7 +398,7 @@ public sealed class PaymentFlowTests : IAsyncLifetime
             IdempotencyKey: $"auth-view-{Guid.NewGuid():N}",
             PaymentMethod: "Wallet");
 
-        var payResp = await _riderClient.PostAsJsonAsync("/api/payments", payReq);
+        var payResp = await _serviceClient.PostAsJsonAsync("/api/payments", payReq);
         Assert.Equal(HttpStatusCode.OK, payResp.StatusCode);
         var payment = await payResp.Content.ReadFromJsonAsync<PaymentDto>();
         Assert.NotNull(payment);

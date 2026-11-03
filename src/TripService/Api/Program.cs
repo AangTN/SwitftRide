@@ -1,3 +1,4 @@
+using MassTransit;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Diagnostics.HealthChecks;
 using SwiftRide.Trip.Api;
@@ -5,7 +6,7 @@ using SwiftRide.Trip.Infrastructure;
 using SwiftRide.ServiceDefaults;
 
 var builder = WebApplication.CreateBuilder(args);
-builder.Services.AddServiceDefaults(builder.Configuration, builder.Environment.IsDevelopment());
+builder.Services.AddServiceDefaults(builder.Configuration, builder.Environment.IsDevelopment(), configureBus: x => x.AddConsumer<PaymentResultConsumer>(c => c.UseMessageRetry(r => r.Interval(3, TimeSpan.FromMilliseconds(200)))));
 builder.Services.AddDbContext<TripDbContext>(o => o.UseSqlServer(builder.Configuration.GetConnectionString("TripDb")
     ?? throw new InvalidOperationException("ConnectionStrings:TripDb is required.")));
 builder.Services.AddSingleton(TimeProvider.System);
@@ -20,9 +21,12 @@ builder.Services.AddOptions<TripOutboxOptions>().Bind(builder.Configuration.GetS
         "Outbox retry count must be 0–100 and delay/timeout must be positive.").ValidateOnStart();
 // Trip can persist requests while the broker reconnects in the background.
 builder.Services.Configure<MassTransit.MassTransitHostOptions>(x => x.WaitUntilStarted = false);
-builder.Services.AddScoped<TripOutboxDispatcher>();
 if (builder.Configuration.GetValue("RabbitMq:Enabled", true))
+{
+    builder.Services.AddScoped<TripOutboxDispatcher>();
     builder.Services.AddHostedService<TripOutboxWorker>();
+}
+builder.Services.AddScoped<TripPaymentResultHandler>();
 builder.Services.AddScoped<TripExceptionFilter>();
 builder.Services.AddHostedService<ProposalExpiryWorker>();
 builder.Services.AddHealthChecks().AddCheck<DatabaseHealthCheck>("Trip-db");

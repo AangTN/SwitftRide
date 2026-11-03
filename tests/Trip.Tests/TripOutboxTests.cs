@@ -128,7 +128,7 @@ public sealed class TripOutboxTests
         }
         Assert.Equal(TripStatus.PaymentPending, trip.Status);
         Assert.Equal("DeliveryUnknown", trip.PaymentStatus);
-        var callback = new PaymentCallbacksController(fixture.Db, new SilentRealtime(), fixture.Clock);
+        var callback = new PaymentCallbacksController(new TripPaymentResultHandler(fixture.Db, new SilentRealtime(), fixture.Clock));
         await callback.PaymentResult(trip.Id, new PaymentResultRequest(trip.PaymentId, "Failed"), default);
         Assert.Equal("Failed", trip.PaymentStatus);
         Assert.Equal(TripStatus.PaymentPending, trip.Status);

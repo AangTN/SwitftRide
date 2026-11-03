@@ -14,11 +14,14 @@ using Microsoft.Extensions.Hosting;
 using Microsoft.IdentityModel.Tokens;
 using Npgsql;
 using SwiftRide.Payment.Infrastructure;
+using MassTransit;
+using SwiftRide.Payment.Api;
 
 namespace SwiftRide.Payment.Tests;
 
 public sealed class PaymentFactory : WebApplicationFactory<Program>
 {
+    public bool Messaging { get; init; }
     private readonly string directory = Path.Combine(Path.GetTempPath(), "swiftride-pay-tests-" + Guid.NewGuid().ToString("N"));
     private readonly SqliteConnection sqlite = new("Data Source=:memory:");
     private readonly string schema = "test_" + Guid.NewGuid().ToString("N");
@@ -62,6 +65,28 @@ public sealed class PaymentFactory : WebApplicationFactory<Program>
         builder.UseEnvironment("Development");
         builder.ConfigureServices(services =>
         {
+            if (Messaging)
+            {
+                services.AddSingleton<PaymentResultInbox>();
+                services.AddScoped<PaymentOutboxDispatcher>();
+                services.AddMassTransit(x =>
+                {
+                    x.AddConsumer<PaymentRequestedConsumer>();
+                    x.AddConsumer<PaymentResultCollector>();
+                    x.SetEndpointNameFormatter(new KebabCaseEndpointNameFormatter($"payment-test-{Guid.NewGuid():N}", false));
+                    if (ushort.TryParse(Environment.GetEnvironmentVariable("SWIFTRIDE_TEST_RABBITMQ_PORT"), out var rabbitPort))
+                        x.UsingRabbitMq((context, cfg) =>
+                        {
+                            cfg.Host("127.0.0.1", rabbitPort, "/", host =>
+                            {
+                                host.Username("payment_test");
+                                host.Password("payment_test_only");
+                            });
+                            cfg.ConfigureEndpoints(context);
+                        });
+                    else x.UsingInMemory((context, cfg) => cfg.ConfigureEndpoints(context));
+                });
+            }
             services.RemoveAll<DbContextOptions<PaymentDbContext>>();
             services.RemoveAll<IDbContextOptionsConfiguration<PaymentDbContext>>();
             services.RemoveAll<PaymentDbContext>();

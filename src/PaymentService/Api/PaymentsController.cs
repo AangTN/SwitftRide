@@ -31,26 +31,13 @@ public sealed class PaymentsController(
             .ToList();
     }
 
+    // Compatibility API for authenticated services only. The booking flow uses RabbitMQ.
     [HttpPost]
-    [Authorize]
+    [Authorize(Roles = "Service")]
     public async Task<ActionResult<PaymentDto>> ProcessPayment(
-        [FromBody] InitiatePaymentRequest request,
-        CancellationToken ct)
+        [FromBody] InitiatePaymentRequest request, CancellationToken ct)
     {
-        var currentUserId = GetCurrentUserId();
-        var roles = GetCurrentUserRoles();
-
-        // Security check: Only internal services, admins, or the rider themselves can initiate payment
-        if (currentUserId.HasValue &&
-            !roles.Contains("Admin", StringComparer.OrdinalIgnoreCase) &&
-            !roles.Contains("Service", StringComparer.OrdinalIgnoreCase) &&
-            currentUserId.Value != request.RiderId)
-        {
-            throw new ApiFailure(403, "forbidden", "Cannot initiate payment on behalf of another user.");
-        }
-
-        var result = await paymentService.ProcessPaymentAsync(request, ct);
-        return Ok(result);
+        return Ok(await paymentService.ProcessPaymentAsync(request, ct));
     }
 
     [HttpGet("trips/{tripId:guid}")]

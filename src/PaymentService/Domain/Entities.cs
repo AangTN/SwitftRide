@@ -28,6 +28,7 @@ public sealed class Payment
     public decimal Amount { get; set; }
     public string Currency { get; set; } = "VND";
     public PaymentStatus Status { get; set; }
+    public string Method { get; set; } = "Wallet";
     public string IdempotencyKey { get; set; } = "";
     public string? ProviderReference { get; set; }
     public string? FailureCode { get; set; }

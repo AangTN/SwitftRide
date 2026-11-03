@@ -1,4 +1,5 @@
 using SwiftRide.Payment.Domain;
+using SwiftRide.ServiceDefaults;
 
 namespace SwiftRide.Payment.Application;
 
@@ -89,6 +90,6 @@ public sealed class PaymentGatewayFactory(IEnumerable<IPaymentGateway> gateways)
         if (_gateways.TryGetValue(method, out var gateway))
             return gateway;
 
-        throw new ArgumentException($"Unsupported payment method: '{method}'. Supported methods: {string.Join(", ", _gateways.Keys)}");
+        throw new ApiFailure(400, "unsupported_payment_method", $"Unsupported payment method: '{method}'. Supported methods: {string.Join(", ", _gateways.Keys)}");
     }
 }

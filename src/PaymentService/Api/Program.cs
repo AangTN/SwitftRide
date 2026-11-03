@@ -1,3 +1,5 @@
+using MassTransit;
+using SwiftRide.Payment.Api;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Diagnostics.HealthChecks;
 using SwiftRide.Payment.Application;
@@ -5,10 +7,20 @@ using SwiftRide.Payment.Infrastructure;
 using SwiftRide.ServiceDefaults;
 
 var builder = WebApplication.CreateBuilder(args);
-builder.Services.AddServiceDefaults(builder.Configuration, builder.Environment.IsDevelopment());
+builder.Services.AddServiceDefaults(builder.Configuration, builder.Environment.IsDevelopment(), configureBus: x => x.AddConsumer<PaymentRequestedConsumer>(c => c.UseMessageRetry(r => r.Interval(3, TimeSpan.FromMilliseconds(200)))));
 builder.Services.AddDbContext<PaymentDbContext>(o => o.UseNpgsql(builder.Configuration.GetConnectionString("PaymentDb")
     ?? throw new InvalidOperationException("ConnectionStrings:PaymentDb is required.")));
 
+builder.Services.AddSingleton(TimeProvider.System);
+builder.Services.Configure<MassTransitHostOptions>(x => x.WaitUntilStarted = false);
+builder.Services.AddOptions<PaymentOutboxOptions>().Bind(builder.Configuration.GetSection("PaymentOutbox"))
+    .Validate(x => x.RetryCount >= 0 && x.RetryCount <= 100 && x.RetryDelaySeconds > 0 && x.PublishTimeoutSeconds > 0,
+        "Invalid payment outbox retry options.").ValidateOnStart();
+if (builder.Configuration.GetValue("RabbitMq:Enabled", true))
+{
+    builder.Services.AddScoped<PaymentOutboxDispatcher>();
+    builder.Services.AddHostedService<PaymentOutboxWorker>();
+}
 builder.Services.AddScoped<IPaymentStore, PaymentStore>();
 builder.Services.AddScoped<ILedgerService, LedgerService>();
 builder.Services.AddScoped<IPaymentGateway, WalletPaymentGateway>();

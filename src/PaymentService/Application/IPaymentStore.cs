@@ -10,6 +10,9 @@ public interface IPaymentTransaction : IAsyncDisposable
 
 public interface IPaymentStore
 {
+    Task LockTripAsync(Guid tripId, CancellationToken ct = default);
+    Task LockWalletAsync(Guid riderId, string currency, CancellationToken ct = default);
+
     Task<IPaymentTransaction> BeginTransactionAsync(CancellationToken ct = default);
 
     Task<Domain.Payment?> FindPaymentByIdAsync(Guid id, CancellationToken ct = default);
