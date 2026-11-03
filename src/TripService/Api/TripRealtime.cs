@@ -4,26 +4,27 @@ using Microsoft.EntityFrameworkCore;
 using SwiftRide.Contracts.Realtime;
 using SwiftRide.Trip.Domain;
 using SwiftRide.Trip.Infrastructure;
+using TripEntity = SwiftRide.Trip.Domain.Trip;
 
 namespace SwiftRide.Trip.Api;
 
 public interface ITripRealtimePublisher
 {
-    Task PublishTripChangedAsync(Trip trip, CancellationToken ct);
-    Task PublishDriverInvitationAsync(Trip trip, TripProposal proposal, CancellationToken ct);
-    Task PublishRideCompletedAsync(Trip trip, CancellationToken ct);
+    Task PublishTripChangedAsync(TripEntity trip, CancellationToken ct);
+    Task PublishDriverInvitationAsync(TripEntity trip, TripProposal proposal, CancellationToken ct);
+    Task PublishRideCompletedAsync(TripEntity trip, CancellationToken ct);
 }
 
 public sealed class TripRealtimePublisher(IHubContext<TripHub> hub) : ITripRealtimePublisher
 {
-    public Task PublishTripChangedAsync(Trip trip, CancellationToken ct) => Task.WhenAll(
+    public Task PublishTripChangedAsync(TripEntity trip, CancellationToken ct) => Task.WhenAll(
         hub.Clients.User(trip.RiderId.ToString()).SendAsync("TripChanged", new TripChanged(trip.Id, trip.Status.ToString(), trip.StateVersion), ct),
         trip.DriverId is Guid driver ? hub.Clients.User(driver.ToString()).SendAsync("TripChanged", new TripChanged(trip.Id, trip.Status.ToString(), trip.StateVersion), ct) : Task.CompletedTask);
 
-    public Task PublishDriverInvitationAsync(Trip trip, TripProposal proposal, CancellationToken ct) =>
+    public Task PublishDriverInvitationAsync(TripEntity trip, TripProposal proposal, CancellationToken ct) =>
         hub.Clients.User(proposal.DriverId!.Value.ToString()).SendAsync("DriverInvitation", new DriverInvitation(trip.Id, proposal.Id, proposal.DriverResponseDeadline!.Value), ct);
 
-    public Task PublishRideCompletedAsync(Trip trip, CancellationToken ct) =>
+    public Task PublishRideCompletedAsync(TripEntity trip, CancellationToken ct) =>
         Task.WhenAll(hub.Clients.User(trip.RiderId.ToString()).SendAsync("RideCompleted", new RideCompleted(trip.Id, trip.PaymentId!), ct),
             trip.DriverId is Guid driver ? hub.Clients.User(driver.ToString()).SendAsync("RideCompleted", new RideCompleted(trip.Id, trip.PaymentId!), ct) : Task.CompletedTask);
 }

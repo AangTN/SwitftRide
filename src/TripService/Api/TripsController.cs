@@ -5,6 +5,7 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Options;
 using SwiftRide.Trip.Domain;
 using SwiftRide.Trip.Infrastructure;
+using TripEntity = SwiftRide.Trip.Domain.Trip;
 
 namespace SwiftRide.Trip.Api;
 
@@ -19,7 +20,7 @@ public sealed class TripsController(TripDbContext db, ITripRealtimePublisher rea
         var existing = await db.Trips.Include(x => x.Proposals).SingleOrDefaultAsync(x => x.RiderId == riderId && x.IdempotencyKey == idempotencyKey, ct);
         if (existing is not null) return Ok(Snapshot(existing));
         var now = clock.GetUtcNow();
-        var trip = new Trip
+        var trip = new TripEntity
         {
             RiderId = riderId, IdempotencyKey = idempotencyKey, PickupAddress = request.PickupAddress,
             PickupLatitude = request.PickupLatitude, PickupLongitude = request.PickupLongitude,
@@ -47,7 +48,7 @@ public sealed class TripsController(TripDbContext db, ITripRealtimePublisher rea
     {
         var userId = UserId();
         var trip = await db.Trips.Include(x => x.Proposals).Where(x => (x.RiderId == userId || x.DriverId == userId || x.Proposals.Any(p => p.DriverId == userId && p.Status == ProposalStatus.AwaitingDriverResponse)) &&
-            x.Status is not TripStatus.Paid and not TripStatus.Cancelled and not TripStatus.Failed).OrderByDescending(x => x.UpdatedAt).FirstOrDefaultAsync(ct);
+            x.Status != TripStatus.Paid && x.Status != TripStatus.Cancelled && x.Status != TripStatus.Failed).OrderByDescending(x => x.UpdatedAt).FirstOrDefaultAsync(ct);
         return trip is null ? NoContent() : Ok(Snapshot(trip));
     }
 
@@ -151,15 +152,15 @@ public sealed class TripsController(TripDbContext db, ITripRealtimePublisher rea
         await db.SaveChangesAsync(ct); await realtime.PublishTripChangedAsync(trip, ct); return Ok(Snapshot(trip));
     }
 
-    private async Task<Trip> RiderTrip(Guid id, int version, CancellationToken ct) { var trip = await LoadForUser(id, ct); if (trip.RiderId != UserId()) throw Failure(403, "trip_forbidden", "Only the rider can perform this action."); EnsureVersion(trip, version); return trip; }
-    private async Task<Trip> DriverTrip(Guid id, int version, CancellationToken ct) { RequireRole("Driver"); var trip = await LoadForUser(id, ct); if (trip.DriverId != UserId()) throw Failure(403, "trip_forbidden", "Only the assigned driver can perform this action."); EnsureVersion(trip, version); return trip; }
-    private async Task<Trip> LoadForUser(Guid id, CancellationToken ct) { var user = UserId(); return await db.Trips.Include(x => x.Proposals).Include(x => x.History).SingleOrDefaultAsync(x => x.Id == id && (x.RiderId == user || x.DriverId == user), ct) ?? throw Failure(404, "trip_not_found", "Trip was not found."); }
-    private async Task<Trip> LoadForUserOrDriverInvitation(Guid id, CancellationToken ct) { var user = UserId(); return await db.Trips.Include(x => x.Proposals).Include(x => x.History).SingleOrDefaultAsync(x => x.Id == id && (x.RiderId == user || x.DriverId == user || x.Proposals.Any(p => p.DriverId == user && p.Status == ProposalStatus.AwaitingDriverResponse)), ct) ?? throw Failure(404, "trip_not_found", "Trip was not found."); }
+    private async Task<TripEntity> RiderTrip(Guid id, int version, CancellationToken ct) { var trip = await LoadForUser(id, ct); if (trip.RiderId != UserId()) throw Failure(403, "trip_forbidden", "Only the rider can perform this action."); EnsureVersion(trip, version); return trip; }
+    private async Task<TripEntity> DriverTrip(Guid id, int version, CancellationToken ct) { RequireRole("Driver"); var trip = await LoadForUser(id, ct); if (trip.DriverId != UserId()) throw Failure(403, "trip_forbidden", "Only the assigned driver can perform this action."); EnsureVersion(trip, version); return trip; }
+    private async Task<TripEntity> LoadForUser(Guid id, CancellationToken ct) { var user = UserId(); return await db.Trips.Include(x => x.Proposals).Include(x => x.History).SingleOrDefaultAsync(x => x.Id == id && (x.RiderId == user || x.DriverId == user), ct) ?? throw Failure(404, "trip_not_found", "Trip was not found."); }
+    private async Task<TripEntity> LoadForUserOrDriverInvitation(Guid id, CancellationToken ct) { var user = UserId(); return await db.Trips.Include(x => x.Proposals).Include(x => x.History).SingleOrDefaultAsync(x => x.Id == id && (x.RiderId == user || x.DriverId == user || x.Proposals.Any(p => p.DriverId == user && p.Status == ProposalStatus.AwaitingDriverResponse)), ct) ?? throw Failure(404, "trip_not_found", "Trip was not found."); }
     private Guid UserId() => Guid.TryParse(User.FindFirstValue("sub"), out var id) ? id : throw Failure(401, "invalid_subject", "Token subject is invalid.");
     private void RequireRole(string role) { if (!User.IsInRole(role)) throw Failure(403, "role_forbidden", $"The {role} role is required."); }
-    private static void EnsureVersion(Trip trip, int version) { if (trip.StateVersion != version) throw Failure(409, "stale_trip_version", "Reload the trip before retrying."); }
+    private static void EnsureVersion(TripEntity trip, int version) { if (trip.StateVersion != version) throw Failure(409, "stale_trip_version", "Reload the trip before retrying."); }
     private static Exception Failure(int status, string code, string detail) => new SwiftRide.ServiceDefaults.ApiFailure(status, code, detail);
-    private static object Snapshot(Trip x) => new { x.Id, x.RiderId, x.DriverId, status = x.Status.ToString(), x.StateVersion, x.AgreedAmount, x.Currency, x.PaymentId, x.PaymentStatus, x.CreatedAt, x.UpdatedAt, x.DriverAcceptedAt, x.PickedUpAt, x.DroppedOffAt, x.CompletedAt, proposals = x.Proposals.Select(p => new { p.Id, p.DriverId, p.QuoteId, p.Amount, p.Currency, status = p.Status.ToString(), p.RiderApprovalDeadline, p.RiderRespondedAt, p.DriverResponseDeadline, p.DriverNameSnapshot, p.PlateNumberSnapshot, p.VehicleNameSnapshot, p.VehicleImageKeySnapshot }) };
+    private static object Snapshot(TripEntity x) => new { x.Id, x.RiderId, x.DriverId, status = x.Status.ToString(), x.StateVersion, x.AgreedAmount, x.Currency, x.PaymentId, x.PaymentStatus, x.CreatedAt, x.UpdatedAt, x.DriverAcceptedAt, x.PickedUpAt, x.DroppedOffAt, x.CompletedAt, proposals = x.Proposals.Select(p => new { p.Id, p.DriverId, p.QuoteId, p.Amount, p.Currency, status = p.Status.ToString(), p.RiderApprovalDeadline, p.RiderRespondedAt, p.DriverResponseDeadline, p.DriverNameSnapshot, p.PlateNumberSnapshot, p.VehicleNameSnapshot, p.VehicleImageKeySnapshot }) };
 }
 
 public sealed record CreateTripRequest(string PickupAddress, double PickupLatitude, double PickupLongitude, string DestinationAddress, double DestinationLatitude, double DestinationLongitude);
