@@ -1,7 +1,23 @@
 namespace SwiftRide.Payment.Domain;
 
-public enum PaymentStatus { Pending, Processing, Succeeded, Failed }
+public enum PaymentStatus { Pending, Processing, Succeeded, Failed, Refunded }
 public enum EntrySide { Debit, Credit }
+
+public static class LedgerAccountCodes
+{
+    public const string RiderWallet = "RIDER_WALLET";
+    public const string DriverPayable = "DRIVER_PAYABLE";
+    public const string PlatformRevenue = "PLATFORM_REVENUE";
+    public const string PaymentClearing = "PAYMENT_CLEARING";
+    public const string SeedClearing = "SEED_CLEARING";
+}
+
+public static class LedgerTransactionTypes
+{
+    public const string PaymentSettled = "PaymentSettled";
+    public const string Refund = "Refund";
+    public const string WalletDeposit = "WalletDeposit";
+}
 
 public sealed class Payment
 {
@@ -12,6 +28,7 @@ public sealed class Payment
     public decimal Amount { get; set; }
     public string Currency { get; set; } = "VND";
     public PaymentStatus Status { get; set; }
+    public string Method { get; set; } = "Wallet";
     public string IdempotencyKey { get; set; } = "";
     public string? ProviderReference { get; set; }
     public string? FailureCode { get; set; }

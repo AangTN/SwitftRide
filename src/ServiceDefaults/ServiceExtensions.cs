@@ -21,7 +21,7 @@ namespace SwiftRide.ServiceDefaults;
 public static class ServiceExtensions
 {
     public static IServiceCollection AddServiceDefaults(this IServiceCollection services, IConfiguration config,
-        bool development, bool broker = true)
+        bool development, bool broker = true, Action<IBusRegistrationConfigurator>? configureBus = null)
     {
         services.AddProblemDetails();
         services.AddExceptionHandler<ApiExceptionHandler>();
@@ -57,6 +57,16 @@ public static class ServiceExtensions
                 IssuerSigningKey = new RsaSecurityKey(rsa), ValidAlgorithms = [SecurityAlgorithms.RsaSha256],
                 NameClaimType = "sub", RoleClaimType = "roles", ClockSkew = TimeSpan.Zero
             };
+            options.Events = new JwtBearerEvents
+            {
+                OnMessageReceived = context =>
+                {
+                    // Browsers cannot attach an Authorization header during the SignalR WebSocket upgrade.
+                    if (context.HttpContext.Request.Path.StartsWithSegments("/api/trips/realtime"))
+                        context.Token = context.Request.Query["access_token"];
+                    return Task.CompletedTask;
+                }
+            };
         });
         services.AddAuthorization();
         services.Configure<ForwardedHeadersOptions>(o =>
@@ -68,16 +78,20 @@ public static class ServiceExtensions
         services.AddHealthChecks();
         if (broker && config.GetValue("RabbitMq:Enabled", true))
         {
-            services.AddMassTransit(x => x.UsingRabbitMq((context, cfg) =>
+            services.AddMassTransit(x =>
             {
-                cfg.Host(config["RabbitMq:Host"] ?? "localhost", config["RabbitMq:VirtualHost"] ?? "/", h =>
+                configureBus?.Invoke(x);
+                x.UsingRabbitMq((context, cfg) =>
                 {
-                    h.Username(config["RabbitMq:Username"] ?? "swiftride");
-                    h.Password(config["RabbitMq:Password"]
-                        ?? throw new InvalidOperationException("RabbitMq:Password is required."));
+                    cfg.Host(config["RabbitMq:Host"] ?? "localhost", config["RabbitMq:VirtualHost"] ?? "/", h =>
+                    {
+                        h.Username(config["RabbitMq:Username"] ?? "swiftride");
+                        h.Password(config["RabbitMq:Password"]
+                            ?? throw new InvalidOperationException("RabbitMq:Password is required."));
+                    });
+                    cfg.ConfigureEndpoints(context);
                 });
-                cfg.ConfigureEndpoints(context);
-            }));
+            });
             services.Configure<MassTransitHostOptions>(o =>
             {
                 o.WaitUntilStarted = true;

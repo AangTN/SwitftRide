@@ -1,5 +1,6 @@
 <Project Sdk="Microsoft.NET.Sdk">
   <ItemGroup>
     <ProjectReference Include="../Domain/SwiftRide.Trip.Domain.csproj" />
+    <ProjectReference Include="../../Contracts/SwiftRide.Contracts.csproj" />
   </ItemGroup>
 </Project>
