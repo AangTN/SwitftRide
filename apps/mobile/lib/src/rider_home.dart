@@ -1,25 +1,24 @@
-import 'dart:async';
-
 import 'package:flutter/material.dart';
 import 'package:flutter/gestures.dart';
-import 'package:geolocator/geolocator.dart';
-import 'package:maplibre_gl/maplibre_gl.dart' show LatLng;
 import 'package:pointer_interceptor/pointer_interceptor.dart';
 
 import 'app.dart' show Brand, green, ink, mint, muted;
 import 'goong_map.dart';
 import 'ride_locations.dart';
+import 'places_api.dart';
 
 class RiderHome extends StatefulWidget {
   const RiderHome({
     super.key,
     required this.fullName,
     required this.account,
+    this.places,
     this.recentDestinations = const [],
   });
 
   final String fullName;
   final Widget account;
+  final PlaceLookup? places;
   final List<RidePlace> recentDestinations;
 
   @override
@@ -36,8 +35,8 @@ class _RiderHomeState extends State<RiderHome>
     value: 1,
     duration: const Duration(milliseconds: 220),
   )..addListener(() => setState(() {}));
-  bool _locating = false;
   RidePlace _pickup = defaultPickup;
+  RidePlace? _destination;
   RideVehicleType _vehicleType = RideVehicleType.motorcycle;
   RidePaymentMethod _paymentMethod = RidePaymentMethod.cash;
   bool get _hasRecent => widget.recentDestinations.isNotEmpty;
@@ -90,11 +89,11 @@ class _RiderHomeState extends State<RiderHome>
               heightFactor: .94,
               child: RideLocationPicker(
                 pickup: _pickup,
-                destination: destination,
+                destination: destination ?? _destination,
+                places: widget.places,
                 recentDestinations: widget.recentDestinations,
                 vehicleType: _vehicleType,
                 paymentMethod: _paymentMethod,
-                onLocate: _locate,
               ),
             ),
           ),
@@ -104,6 +103,7 @@ class _RiderHomeState extends State<RiderHome>
     if (result == null || !mounted) return;
     setState(() {
       _pickup = result.pickup;
+      _destination = result.destination;
       _vehicleType = result.vehicleType;
       _paymentMethod = result.paymentMethod;
     });
@@ -196,51 +196,6 @@ class _RiderHomeState extends State<RiderHome>
     ),
   );
 
-  Future<RidePlace?> _locate() async {
-    if (_locating) return null;
-    setState(() => _locating = true);
-    void message(String text) {
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(text)));
-    }
-
-    try {
-      var permission = await Geolocator.checkPermission();
-      if (permission == LocationPermission.denied) {
-        permission = await Geolocator.requestPermission();
-      }
-      if (permission == LocationPermission.denied ||
-          permission == LocationPermission.deniedForever) {
-        message(
-          'Hãy cho phép truy cập vị trí trong trình duyệt hoặc cài đặt thiết bị.',
-        );
-        return null;
-      }
-      final position = await Geolocator.getCurrentPosition(
-        locationSettings: const LocationSettings(
-          accuracy: LocationAccuracy.high,
-          timeLimit: Duration(seconds: 15),
-        ),
-      );
-      if (!mounted) return null;
-      final point = LatLng(position.latitude, position.longitude);
-      setState(() => _pickup = RidePlace('Vị trí hiện tại', '', point));
-      await _map.currentState?.showCurrentLocation(point);
-      return _pickup;
-    } on TimeoutException {
-      message('Chưa lấy được vị trí. Vui lòng thử lại.');
-    } on LocationServiceDisabledException {
-      message('Vui lòng bật dịch vụ vị trí trên thiết bị.');
-    } catch (_) {
-      message(
-        'Không thể lấy vị trí hiện tại. Kiểm tra quyền truy cập và thử lại.',
-      );
-    } finally {
-      if (mounted) setState(() => _locating = false);
-    }
-    return null;
-  }
-
   Widget _home() => LayoutBuilder(
     builder: (context, constraints) {
       final expandedHeight = (constraints.maxHeight * .75).clamp(126.0, 380.0);
@@ -270,33 +225,6 @@ class _RiderHomeState extends State<RiderHome>
                             child: Brand(size: 27),
                           ),
                         ),
-                      ),
-                    ),
-                    Positioned(
-                      right: 16,
-                      bottom: 16,
-                      child: PointerInterceptor(
-                        child: _locating
-                            ? const Material(
-                                shape: CircleBorder(),
-                                color: Colors.white,
-                                child: Padding(
-                                  padding: EdgeInsets.all(14),
-                                  child: SizedBox(
-                                    width: 20,
-                                    height: 20,
-                                    child: CircularProgressIndicator(
-                                      strokeWidth: 2,
-                                      color: green,
-                                    ),
-                                  ),
-                                ),
-                              )
-                            : _roundButton(
-                                Icons.my_location_outlined,
-                                'Về vị trí hiện tại',
-                                _locate,
-                              ),
                       ),
                     ),
                   ],
@@ -443,19 +371,6 @@ class _RiderHomeState extends State<RiderHome>
       ),
     ),
   );
-
-  Widget _roundButton(IconData icon, String tooltip, VoidCallback onTap) =>
-      Material(
-        color: Colors.white,
-        shape: const CircleBorder(),
-        elevation: 2,
-        shadowColor: ink.withValues(alpha: .12),
-        child: IconButton(
-          onPressed: onTap,
-          tooltip: tooltip,
-          icon: Icon(icon, color: ink, size: 23),
-        ),
-      );
 }
 
 class _DestinationPrompt extends StatelessWidget {

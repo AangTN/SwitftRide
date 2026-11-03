@@ -1,5 +1,7 @@
 using System.Net;
 using System.Text;
+using System.Text.Json;
+using System.Globalization;
 using Microsoft.AspNetCore.WebUtilities;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging.Abstractions;
@@ -10,6 +12,53 @@ namespace SwiftRide.Matching.Tests;
 
 public sealed class GoongClientTests
 {
+    [Fact]
+    public async Task Details_preserve_the_selected_place_id_address_and_coordinates()
+    {
+        const string id = "campus/+==";
+        var (client, http) = CreateClient(request =>
+        {
+            Assert.Equal("/Place/Detail", request.RequestUri!.AbsolutePath);
+            Assert.Equal(id, QueryHelpers.ParseQuery(request.RequestUri.Query)["place_id"]);
+            return JsonResponse("""
+                {"status":"OK","result":{"place_id":"campus/+==","name":"Đại học Sài Gòn",
+                "formatted_address":"273 An Dương Vương, Quận 5","geometry":{"location":{"lat":10.759,"lng":106.682}}}}
+                """);
+        });
+        using (http)
+        {
+            var place = await client.GetPlaceDetailsAsync(id, default);
+            Assert.NotNull(place);
+            Assert.Equal(id, place.PlaceId);
+            Assert.Equal("273 An Dương Vương, Quận 5", place.FormattedAddress);
+            Assert.Equal(10.759, place.Latitude);
+            Assert.Equal(106.682, place.Longitude);
+        }
+    }
+
+    [Theory]
+    [InlineData("wrong-id", "10.759", "106.682")]
+    [InlineData("chosen-id", "100", "106.682")]
+    [InlineData("chosen-id", "10.759", "null")]
+    public async Task Details_reject_a_different_place_or_invalid_coordinates(string id, string lat, string lng)
+    {
+        var (client, http) = CreateClient(_ => JsonResponse(JsonSerializer.Serialize(new
+        {
+            status = "OK", result = new { place_id = id, name = "Campus", formatted_address = "Street",
+                geometry = new { location = new { lat = double.Parse(lat, CultureInfo.InvariantCulture),
+                    lng = lng == "null" ? (double?)null : double.Parse(lng, CultureInfo.InvariantCulture) } } }
+        })));
+        using (http)
+            await Assert.ThrowsAsync<SwiftRide.Matching.Application.MatchingFailureException>(() => client.GetPlaceDetailsAsync("chosen-id", default));
+    }
+
+    [Fact]
+    public async Task Details_return_no_match_instead_of_guessing_another_address()
+    {
+        var (client, http) = CreateClient(_ => JsonResponse("""{"status":"ZERO_RESULTS"}"""));
+        using (http) Assert.Null(await client.GetPlaceDetailsAsync("missing", default));
+    }
+
     [Fact]
     public async Task Reverse_geocoding_sends_coordinates_and_parses_the_address()
     {

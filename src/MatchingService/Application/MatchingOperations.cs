@@ -33,6 +33,7 @@ public sealed record RouteMetrics(double DistanceMeters, int DurationSeconds);
 public sealed record GeocodedAddress(string FormattedAddress, double Latitude, double Longitude, string? PlaceId);
 
 public sealed record PlaceSuggestion(string Description, string PlaceId);
+public sealed record PlaceDetails(string PlaceId, string Name, string FormattedAddress, double Latitude, double Longitude);
 
 public sealed record MatchedDriver(
     string DriverId,
@@ -95,6 +96,7 @@ public interface IGoongClient
     Task<GeocodedAddress?> GeocodeAsync(string address, CancellationToken ct);
     Task<GeocodedAddress?> ReverseGeocodeAsync(double latitude, double longitude, CancellationToken ct);
     Task<IReadOnlyList<PlaceSuggestion>> SearchPlacesAsync(string input, CancellationToken ct);
+    Task<PlaceDetails?> GetPlaceDetailsAsync(string placeId, CancellationToken ct);
 }
 
 public sealed class MatchingCoordinator(
@@ -225,6 +227,9 @@ public sealed class MatchingCoordinator(
 
     public Task<IReadOnlyList<PlaceSuggestion>> SearchPlacesAsync(string input, CancellationToken ct) =>
         goong.SearchPlacesAsync(input.Trim(), ct);
+
+    public Task<PlaceDetails?> GetPlaceDetailsAsync(string placeId, CancellationToken ct) =>
+        goong.GetPlaceDetailsAsync(placeId.Trim(), ct);
 
     private async Task<MatchedDriver> ReturnExistingAssignmentAsync(
         DriverAvailability existing, DriverMatchRequest request, string vehicleType,

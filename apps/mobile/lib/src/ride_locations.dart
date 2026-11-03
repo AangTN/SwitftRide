@@ -1,19 +1,16 @@
+import 'dart:async';
 import 'dart:ui' as ui;
 
 import 'package:flutter/material.dart';
 import 'package:maplibre_gl/maplibre_gl.dart';
 
 import 'app.dart' show ink, muted;
+import 'auth.dart' show AuthFailure;
+import 'places_api.dart';
+export 'places_api.dart' show RidePlace;
 
 const _selectionGreen = Color(0xFF00B53E);
 const _bookingAccent = Color(0xFF00A83B);
-
-class RidePlace {
-  const RidePlace(this.name, this.address, [this.point]);
-  final String name;
-  final String address;
-  final LatLng? point;
-}
 
 const mockRecentDestinations = [
   RidePlace(
@@ -64,6 +61,25 @@ class RideLocations {
   final RidePlace destination;
   final RideVehicleType vehicleType;
   final RidePaymentMethod paymentMethod;
+
+  Map<String, Object> toTripRequest() {
+    if (!pickup.isResolved || !destination.isResolved) {
+      throw StateError('Điểm đón và điểm đến phải có địa chỉ và tọa độ.');
+    }
+    return {
+      'pickupAddress': pickup.address,
+      'pickupLatitude': pickup.point!.latitude,
+      'pickupLongitude': pickup.point!.longitude,
+      'destinationAddress': destination.address,
+      'destinationLatitude': destination.point!.latitude,
+      'destinationLongitude': destination.point!.longitude,
+      'vehicleType': switch (vehicleType) {
+        RideVehicleType.motorcycle => 'Motorbike',
+        RideVehicleType.car4Seats => 'Car4Seats',
+        RideVehicleType.car7Seats => 'Car7Seats',
+      },
+    };
+  }
 }
 
 enum RideVehicleType {
@@ -93,14 +109,14 @@ class RideLocationPicker extends StatefulWidget {
     required this.recentDestinations,
     required this.vehicleType,
     required this.paymentMethod,
-    this.onLocate,
+    this.places,
   });
   final RidePlace pickup;
   final RidePlace? destination;
   final List<RidePlace> recentDestinations;
   final RideVehicleType vehicleType;
   final RidePaymentMethod paymentMethod;
-  final Future<RidePlace?> Function()? onLocate;
+  final PlaceLookup? places;
 
   @override
   State<RideLocationPicker> createState() => _RideLocationPickerState();
@@ -115,7 +131,13 @@ class _RideLocationPickerState extends State<RideLocationPicker> {
   final _pickupFocus = FocusNode();
   final _destinationFocus = FocusNode();
   String _query = '';
-  bool _locating = false;
+  Timer? _debounce;
+  int _requestVersion = 0;
+  bool _searchPickup = false;
+  bool _searching = false;
+  bool _resolving = false;
+  String? _lookupError;
+  List<PlacePrediction> _predictions = [];
   late RidePlace _pickup = widget.pickup;
   late RidePlace? _destination = widget.destination;
   late RideVehicleType _vehicleType = widget.vehicleType;
@@ -123,6 +145,8 @@ class _RideLocationPickerState extends State<RideLocationPicker> {
 
   @override
   void dispose() {
+    _debounce?.cancel();
+    _requestVersion++;
     _pickupText.dispose();
     _destinationText.dispose();
     _pickupFocus.dispose();
@@ -130,44 +154,129 @@ class _RideLocationPickerState extends State<RideLocationPicker> {
     super.dispose();
   }
 
-  void _select(RidePlace place) {
+  void _changed(String value, bool pickup) {
+    _debounce?.cancel();
+    final version = ++_requestVersion;
     setState(() {
-      _destination = place;
-      _destinationText.text = place.name;
-      FocusScope.of(context).unfocus();
-      _query = '';
+      _searchPickup = pickup;
+      _query = value.trim();
+      if (pickup) {
+        _pickup = defaultPickup;
+      } else {
+        _destination = null;
+      }
+      _predictions = [];
+      _lookupError = null;
+      _resolving = false;
+      _searching = _query.length >= 2;
     });
-  }
-
-  Future<void> _useCurrentLocation() async {
-    if (_locating || widget.onLocate == null) return;
-    setState(() => _locating = true);
-    try {
-      final place = await widget.onLocate!();
-      if (place == null || !mounted) return;
-      setState(() {
-        _pickup = place;
-        _pickupText.text = place.name;
-      });
-    } finally {
-      if (mounted) setState(() => _locating = false);
+    if (_searching) {
+      _debounce = Timer(
+        const Duration(milliseconds: 350),
+        () => _search(version),
+      );
     }
   }
 
+  void _activate(bool pickup) {
+    if (_searchPickup == pickup) return;
+    _debounce?.cancel();
+    final version = ++_requestVersion;
+    final text = pickup ? _pickupText.text : _destinationText.text;
+    final resolved = pickup
+        ? _pickup.isResolved
+        : _destination?.isResolved == true;
+    setState(() {
+      _searchPickup = pickup;
+      _query = resolved ? '' : text.trim();
+      _predictions = [];
+      _lookupError = null;
+      _resolving = false;
+      _searching = _query.length >= 2;
+    });
+    if (_searching) {
+      _debounce = Timer(
+        const Duration(milliseconds: 350),
+        () => _search(version),
+      );
+    }
+  }
+
+  Future<void> _search(int version) async {
+    try {
+      final api = widget.places;
+      if (api == null) {
+        throw const AuthFailure('Không kết nối được dịch vụ tìm địa điểm.');
+      }
+      final results = await api.search(_query);
+      if (!mounted || version != _requestVersion) return;
+      setState(() {
+        _predictions = results;
+        _searching = false;
+      });
+    } catch (error) {
+      if (!mounted || version != _requestVersion) return;
+      setState(() {
+        _lookupError = _errorMessage(error);
+        _searching = false;
+      });
+    }
+  }
+
+  String _errorMessage(Object error) => error is AuthFailure
+      ? error.message
+      : 'Không tải được địa điểm. Vui lòng thử lại.';
+
+  Future<void> _selectPrediction(PlacePrediction prediction) async {
+    _debounce?.cancel();
+    final version = ++_requestVersion;
+    final pickup = _searchPickup;
+    setState(() {
+      _resolving = true;
+      _lookupError = null;
+      _searching = false;
+    });
+    try {
+      final place = await widget.places!.details(prediction.placeId);
+      if (!mounted || version != _requestVersion) return;
+      if (!place.isResolved) {
+        throw const AuthFailure('Địa điểm chưa có tọa độ hợp lệ.');
+      }
+      _savePlace(place, pickup);
+    } catch (error) {
+      if (!mounted || version != _requestVersion) return;
+      setState(() {
+        _lookupError = _errorMessage(error);
+        _resolving = false;
+      });
+    }
+  }
+
+  void _savePlace(RidePlace place, bool pickup) {
+    _debounce?.cancel();
+    _requestVersion++;
+    setState(() {
+      if (pickup) {
+        _pickup = place;
+        _pickupText.text = place.name;
+      } else {
+        _destination = place;
+        _destinationText.text = place.name;
+      }
+      _query = '';
+      _predictions = [];
+      _resolving = false;
+      _searching = false;
+      _lookupError = null;
+    });
+    FocusScope.of(context).unfocus();
+  }
+
   void _apply() {
-    if (!_form.currentState!.validate()) return;
-    RidePlace value(TextEditingController text, RidePlace? selected) =>
-        selected?.name == text.text.trim()
-        ? selected!
-        : RidePlace(text.text.trim(), '');
+    if (!_form.currentState!.validate() || _resolving || _searching) return;
     Navigator.pop(
       context,
-      RideLocations(
-        value(_pickupText, _pickup),
-        value(_destinationText, _destination),
-        _vehicleType,
-        _paymentMethod,
-      ),
+      RideLocations(_pickup, _destination!, _vehicleType, _paymentMethod),
     );
   }
 
@@ -175,16 +284,6 @@ class _RideLocationPickerState extends State<RideLocationPicker> {
   Widget build(BuildContext context) {
     final recent = widget.recentDestinations;
     final defaults = recent.isEmpty ? suggestedDestinations : recent;
-    final choices = <RidePlace>[...recent, ...suggestedDestinations];
-    final visible = _query.isEmpty
-        ? defaults
-        : choices
-              .where(
-                (place) => '${place.name} ${place.address}'
-                    .toLowerCase()
-                    .contains(_query.toLowerCase()),
-              )
-              .toList();
     return ScrollConfiguration(
       behavior: ScrollConfiguration.of(context).copyWith(scrollbars: false),
       child: SafeArea(
@@ -269,7 +368,11 @@ class _RideLocationPickerState extends State<RideLocationPicker> {
                       const SizedBox(height: 20),
                       Text(
                         _query.isNotEmpty
-                            ? 'Kết quả tìm kiếm'
+                            ? (_searchPickup
+                                  ? 'Kết quả điểm đón'
+                                  : 'Kết quả điểm đến')
+                            : _searchPickup
+                            ? 'Tìm điểm đón'
                             : recent.isEmpty
                             ? 'Điểm đến đề xuất'
                             : 'Điểm đến gần đây',
@@ -280,17 +383,71 @@ class _RideLocationPickerState extends State<RideLocationPicker> {
                         ),
                       ),
                       const SizedBox(height: 12),
-                      if (visible.isEmpty)
-                        const Padding(
-                          padding: EdgeInsets.symmetric(vertical: 24),
-                          child: Text(
-                            'Không có địa điểm phù hợp.\nBạn có thể nhập địa chỉ và chọn Áp dụng.',
-                            style: TextStyle(color: muted, height: 1.6),
+                      if (_searching || _resolving)
+                        Padding(
+                          padding: const EdgeInsets.symmetric(vertical: 16),
+                          child: Row(
+                            children: [
+                              const SizedBox(
+                                width: 18,
+                                height: 18,
+                                child: CircularProgressIndicator(
+                                  strokeWidth: 2,
+                                  color: _bookingAccent,
+                                ),
+                              ),
+                              const SizedBox(width: 10),
+                              Expanded(
+                                child: Text(
+                                  _resolving
+                                      ? 'Đang lấy địa chỉ và tọa độ…'
+                                      : 'Đang tìm địa điểm…',
+                                ),
+                              ),
+                            ],
                           ),
                         )
+                      else if (_lookupError != null)
+                        Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              _lookupError!,
+                              style: const TextStyle(color: muted),
+                            ),
+                            TextButton(
+                              onPressed: () {
+                                setState(() {
+                                  _lookupError = null;
+                                  _searching = true;
+                                });
+                                _search(++_requestVersion);
+                              },
+                              child: const Text('Thử lại'),
+                            ),
+                          ],
+                        )
+                      else if (_query.isNotEmpty)
+                        if (_query.length < 2)
+                          const Text(
+                            'Nhập ít nhất 2 ký tự để tìm địa điểm.',
+                            style: TextStyle(color: muted),
+                          )
+                        else if (_predictions.isEmpty)
+                          const Text(
+                            'Không tìm thấy địa điểm. Hãy thử tên hoặc địa chỉ cụ thể hơn.',
+                            style: TextStyle(color: muted),
+                          )
+                        else
+                          for (final prediction in _predictions)
+                            _predictionTile(prediction)
+                      else if (_searchPickup)
+                        const Text(
+                          'Nhập tên địa điểm hoặc địa chỉ điểm đón, rồi chọn kết quả phù hợp.',
+                          style: TextStyle(color: muted),
+                        )
                       else
-                        for (var i = 0; i < visible.length; i++)
-                          _placeTile(visible[i]),
+                        for (final place in defaults) _placeTile(place),
                       const SizedBox(height: 18),
                       _sectionTitle(Icons.directions_car_outlined, 'Loại xe'),
                       const SizedBox(height: 12),
@@ -338,7 +495,7 @@ class _RideLocationPickerState extends State<RideLocationPicker> {
                       fontWeight: FontWeight.w700,
                     ),
                   ),
-                  onPressed: _apply,
+                  onPressed: _resolving || _searching ? null : _apply,
                   child: const Text('Áp dụng'),
                 ),
               ),
@@ -364,6 +521,23 @@ class _RideLocationPickerState extends State<RideLocationPicker> {
         ),
       ),
     ],
+  );
+
+  Widget _predictionTile(PlacePrediction prediction) => Padding(
+    padding: const EdgeInsets.only(bottom: 6),
+    child: ListTile(
+      key: ValueKey('place-${prediction.placeId}'),
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(17),
+        side: const BorderSide(color: Color(0xFFECEEF2)),
+      ),
+      leading: const Icon(Icons.location_on_rounded, color: _selectionGreen),
+      title: Text(
+        prediction.description,
+        style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w600),
+      ),
+      onTap: () => _selectPrediction(prediction),
+    ),
   );
 
   Widget _placeTile(RidePlace place) => Padding(
@@ -409,7 +583,7 @@ class _RideLocationPickerState extends State<RideLocationPicker> {
           overflow: TextOverflow.ellipsis,
           style: const TextStyle(fontSize: 12, color: muted),
         ),
-        onTap: () => _select(place),
+        onTap: () => _savePlace(place, false),
       ),
     ),
   );
@@ -542,6 +716,11 @@ class _RideLocationPickerState extends State<RideLocationPicker> {
         ),
         decoration: InputDecoration(
           hintText: pickup ? 'Nhập điểm đón' : 'Điểm đến',
+          helperText:
+              (pickup ? _pickup : _destination)?.address.isNotEmpty == true
+              ? (pickup ? _pickup : _destination)!.address
+              : null,
+          helperMaxLines: 2,
           hintStyle: const TextStyle(
             color: Color(0xFF87938D),
             fontWeight: FontWeight.w400,
@@ -570,36 +749,25 @@ class _RideLocationPickerState extends State<RideLocationPicker> {
             padding: const EdgeInsets.symmetric(horizontal: 12),
             child: Icon(icon, color: _selectionGreen, size: 27),
           ),
-          suffixIcon: pickup
-              ? IconButton(
-                  tooltip: 'Dùng vị trí hiện tại',
-                  icon: _locating
-                      ? const SizedBox(
-                          width: 20,
-                          height: 20,
-                          child: CircularProgressIndicator(
-                            strokeWidth: 2,
-                            color: _bookingAccent,
-                            semanticsLabel: 'Đang lấy vị trí',
-                          ),
-                        )
-                      : const Icon(
-                          Icons.my_location_rounded,
-                          color: _bookingAccent,
-                          size: 23,
-                        ),
-                  onPressed: _locating || widget.onLocate == null
-                      ? null
-                      : _useCurrentLocation,
-                )
-              : null,
         ),
-        onChanged: (value) {
-          if (!pickup) setState(() => _query = value.trim());
+        onTap: () => _activate(pickup),
+        onChanged: (value) => _changed(value, pickup),
+        validator: (value) {
+          if (value == null || value.trim().isEmpty) {
+            return 'Vui lòng nhập ${label.toLowerCase()}.';
+          }
+          final selected = pickup ? _pickup : _destination;
+          if (selected == null ||
+              !selected.isResolved ||
+              selected.name != value.trim()) {
+            return 'Vui lòng chọn ${label.toLowerCase()} từ kết quả tìm kiếm.';
+          }
+          return null;
         },
-        validator: (value) => value == null || value.trim().isEmpty
-            ? 'Vui lòng nhập ${label.toLowerCase()}.'
-            : null,
+        maxLength: 200,
+        buildCounter:
+            (_, {required currentLength, required isFocused, maxLength}) =>
+                null,
         textInputAction: pickup ? TextInputAction.next : TextInputAction.done,
         onFieldSubmitted: (_) {
           if (pickup) {

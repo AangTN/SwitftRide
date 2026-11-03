@@ -33,9 +33,9 @@ public sealed class DriverProfileTests : IAsyncLifetime
         client = factory.CreateClient();
     }
     public async Task DisposeAsync() { client.Dispose(); await factory.DisposeAsync(); key.Dispose(); Directory.Delete(directory, true); }
-    private Task<HttpResponseMessage> Get(string? role = null, string id = DriverId)
+    private Task<HttpResponseMessage> Get(string? role = null, string id = DriverId, string path = "/api/matching/drivers/me")
     {
-        var request = new HttpRequestMessage(HttpMethod.Get, "/api/matching/drivers/me");
+        var request = new HttpRequestMessage(HttpMethod.Get, path);
         if (role is not null) {
             var token = new JwtSecurityToken("swiftride-auth", "swiftride-api", [new Claim("sub", id), new Claim("roles", role)], DateTime.UtcNow.AddSeconds(-1), DateTime.UtcNow.AddMinutes(5), new SigningCredentials(new RsaSecurityKey(key), SecurityAlgorithms.RsaSha256));
             request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", new JwtSecurityTokenHandler().WriteToken(token));
@@ -44,6 +44,25 @@ public sealed class DriverProfileTests : IAsyncLifetime
     }
     [Fact] public async Task Anonymous_is_rejected() => Assert.Equal(HttpStatusCode.Unauthorized, (await Get()).StatusCode);
     [Fact] public async Task Rider_is_forbidden() => Assert.Equal(HttpStatusCode.Forbidden, (await Get("Rider")).StatusCode);
+    [Theory]
+    [InlineData(null, HttpStatusCode.Unauthorized)]
+    [InlineData("Service", HttpStatusCode.Forbidden)]
+    [InlineData("Rider", HttpStatusCode.OK)]
+    [InlineData("Driver", HttpStatusCode.OK)]
+    public async Task Place_details_require_a_customer_or_driver_token(string? role, HttpStatusCode expected)
+    {
+        var response = await Get(role, path: "/api/matching/places/details?placeId=chosen");
+        Assert.Equal(expected, response.StatusCode);
+        if (expected == HttpStatusCode.OK)
+        {
+            var json = JsonDocument.Parse(await response.Content.ReadAsStringAsync()).RootElement;
+            Assert.Equal("chosen", json.GetProperty("placeId").GetString());
+            Assert.Equal(10.759, json.GetProperty("latitude").GetDouble());
+        }
+    }
+    [Fact]
+    public async Task Missing_place_id_returns_validation_error() =>
+        Assert.Equal(HttpStatusCode.BadRequest, (await Get("Rider", path: "/api/matching/places/details")).StatusCode);
     [Theory]
     [InlineData("/api/matching/proposals/assign")]
     [InlineData("/api/matching/quotes")]
@@ -76,7 +95,10 @@ public sealed class DriverProfileTests : IAsyncLifetime
         protected override void ConfigureWebHost(IWebHostBuilder builder)
         {
             builder.UseEnvironment("Development");
-            builder.ConfigureServices(services => { services.RemoveAll<IDriverProfileReader>(); services.AddSingleton<IDriverProfileReader, FakeProfiles>(); });
+            builder.ConfigureServices(services => {
+                services.RemoveAll<IDriverProfileReader>(); services.AddSingleton<IDriverProfileReader, FakeProfiles>();
+                services.RemoveAll<IGoongClient>(); services.AddSingleton<IGoongClient, FakePlaces>();
+            });
         }
     }
     private sealed class FakeProfiles : IDriverProfileReader
@@ -85,5 +107,14 @@ public sealed class DriverProfileTests : IAsyncLifetime
             Id = DriverId, LegalName = "Tên tài xế đã xác minh", PlateNumber = "59A1-12345", VehicleName = "Honda Wave Alpha",
             AvatarImageKey = "avatars/driver.webp"
         } : null);
+    }
+    private sealed class FakePlaces : IGoongClient
+    {
+        public Task<PlaceDetails?> GetPlaceDetailsAsync(string id, CancellationToken ct) =>
+            Task.FromResult<PlaceDetails?>(new PlaceDetails(id, "Campus", "273 An Dương Vương", 10.759, 106.682));
+        public Task<RouteMetrics> GetRouteAsync(double a, double b, double c, double d, string vehicleType, CancellationToken ct) => throw new NotSupportedException();
+        public Task<GeocodedAddress?> GeocodeAsync(string address, CancellationToken ct) => throw new NotSupportedException();
+        public Task<GeocodedAddress?> ReverseGeocodeAsync(double latitude, double longitude, CancellationToken ct) => throw new NotSupportedException();
+        public Task<IReadOnlyList<PlaceSuggestion>> SearchPlacesAsync(string input, CancellationToken ct) => throw new NotSupportedException();
     }
 }

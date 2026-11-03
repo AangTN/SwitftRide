@@ -235,6 +235,7 @@ public sealed class MatchingOperationsTests
 
     private sealed class FakeGoong : IGoongClient
     {
+        public Task<PlaceDetails?> GetPlaceDetailsAsync(string placeId, CancellationToken ct) => Task.FromResult<PlaceDetails?>(null);
         public Task<RouteMetrics> GetRouteAsync(
             double originLatitude, double originLongitude,
             double destinationLatitude, double destinationLongitude,

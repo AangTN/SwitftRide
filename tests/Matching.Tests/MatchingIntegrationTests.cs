@@ -252,6 +252,7 @@ public sealed class MatchingIntegrationTests
 
     private sealed class StubGoong : IGoongClient
     {
+        public Task<PlaceDetails?> GetPlaceDetailsAsync(string placeId, CancellationToken ct) => Task.FromResult<PlaceDetails?>(null);
         public int Calls { get; private set; }
         public int Failures { get; set; }
         public Task<RouteMetrics> GetRouteAsync(double a, double b, double c, double d, string vehicleType, CancellationToken ct)

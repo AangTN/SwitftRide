@@ -75,6 +75,7 @@ Các API dưới đây đi qua Gateway (`http://localhost:5000`) và yêu cầu 
 | `PUT /api/matching/drivers/me/location` | Driver | Cập nhật GPS, cả lúc đang được giữ hoặc chạy chuyến; không đổi trạng thái nhận chuyến |
 | `GET /api/matching/places/geocode?address=...` | Rider, Driver | Tra địa chỉ thành tọa độ bằng Goong |
 | `GET /api/matching/places/search?input=...` | Rider, Driver | Gợi ý địa điểm bằng Goong Places Autocomplete |
+| `GET /api/matching/places/details?placeId=...` | Rider, Driver | Địa chỉ và tọa độ đúng địa điểm đã chọn |
 | `GET /api/matching/places/reverse?latitude=...&longitude=...` | Rider, Driver | Tra địa chỉ từ tọa độ bằng Goong |
 
 Khách tạo chuyến qua Trip với điểm đón/đến và `vehicleType` (`Motorbike`, `Car4Seats`, `Car7Seats`). Trip gửi lệnh tìm tài xế/định giá qua RabbitMQ; app không gọi trực tiếp Matching để giữ tài xế hoặc tạo giá chính thức. Matching tìm trong 10 km, loại GPS quá 120 giây. Khách có 90 giây xác nhận cả tài xế và giá, sau đó tài xế có 30 giây trả lời. Trip quyết định hết hạn và gửi lệnh giải phóng qua Outbox. Giá áp dụng `p = ((cd*d + ct*t)*s + cm)*eta*(1+T)`; dùng decimal, làm tròn VND lên tại nửa đồng và lưu snapshot theo proposal.

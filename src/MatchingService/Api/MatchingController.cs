@@ -85,6 +85,21 @@ public sealed class MatchingController(MatchingCoordinator coordinator, IMatchin
         return Ok(await coordinator.SearchPlacesAsync(input, ct));
     }
 
+    [HttpGet("places/details"), Authorize(Roles = "Rider,Driver")]
+    public async Task<IActionResult> PlaceDetails([FromQuery] string? placeId, CancellationToken ct)
+    {
+        if (string.IsNullOrWhiteSpace(placeId) || placeId.Trim().Length > 1024)
+            return ValidationProblem(new ValidationProblemDetails(new Dictionary<string, string[]>
+            {
+                ["placeId"] = ["Place ID is required and must be at most 1024 characters."]
+            }));
+        var result = await coordinator.GetPlaceDetailsAsync(placeId, ct);
+        return result is null ? NotFound(new ProblemDetails
+        {
+            Status = 404, Title = "address_not_found", Detail = "The selected place is no longer available."
+        }) : Ok(result);
+    }
+
     [HttpGet("places/reverse"), Authorize(Roles = "Rider,Driver")]
     public async Task<IActionResult> ReverseGeocode(
         [FromQuery] double? latitude, [FromQuery] double? longitude, CancellationToken ct)

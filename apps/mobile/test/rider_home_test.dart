@@ -2,10 +2,12 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:geolocator/geolocator.dart';
+import 'package:maplibre_gl/maplibre_gl.dart';
+import 'package:swiftride_mobile/src/auth.dart';
 import 'package:swiftride_mobile/src/rider_home.dart';
 import 'package:swiftride_mobile/src/goong_map.dart';
 import 'package:swiftride_mobile/src/ride_locations.dart';
+import 'package:swiftride_mobile/src/places_api.dart';
 import 'auth_layout_test.dart' show capturePreview;
 
 void main() {
@@ -19,219 +21,185 @@ void main() {
       'MaterialIcons',
     )..addFont(rootBundle.load('fonts/MaterialIcons-Regular.otf'))).load();
   });
-  testWidgets('rider home fits phone sizes, opens suggestions and account', (
-    tester,
-  ) async {
-    tester.view.devicePixelRatio = 1;
-    addTearDown(tester.view.resetDevicePixelRatio);
-    addTearDown(tester.view.resetPhysicalSize);
-    for (final size in [
-      const Size(360, 640),
-      const Size(390, 844),
-      const Size(430, 932),
-    ]) {
-      tester.view.physicalSize = size;
-      final capture = GlobalKey();
-      await tester.pumpWidget(
-        RepaintBoundary(
-          key: capture,
-          child: MaterialApp(
-            theme: ThemeData(fontFamily: 'BeVietnamPro'),
-            home: const RiderHome(
-              fullName: 'Nguyễn Văn An',
-              account: Text('Hồ sơ khách hàng'),
-            ),
-          ),
-        ),
-      );
-      await tester.pumpAndSettle();
-      expect(find.text('Đặt xe ngay'), findsNothing);
-      expect(find.text('Xem tất cả'), findsNothing);
-      expect(find.text('Điểm đến đề xuất'), findsOneWidget);
-      expect(find.text('Điểm đến gần đây'), findsNothing);
-      for (final place in suggestedDestinations) {
-        expect(find.text(place.name), findsOneWidget);
-      }
-      expect(find.text('Chưa có cấu hình bản đồ Goong.'), findsOneWidget);
-      expect(tester.takeException(), isNull);
-      await capturePreview(
-        tester,
-        capture,
-        'rider-home-${size.width.toInt()}x${size.height.toInt()}',
-      );
-      expect(
-        tester.widget<GoongMap>(find.byType(GoongMap)).interactive,
-        isTrue,
-      );
-      await tester.tap(find.text('Bạn muốn đi đâu?'));
-      await tester.pumpAndSettle();
-      expect(
-        tester.widget<GoongMap>(find.byType(GoongMap)).interactive,
-        isFalse,
-      );
-      expect(find.byKey(const Key('pickup-field')), findsOneWidget);
-      expect(find.byKey(const Key('destination-field')), findsOneWidget);
-      expect(
-        tester
-            .widget<TextFormField>(find.byKey(const Key('pickup-field')))
-            .controller!
-            .text,
-        isEmpty,
-      );
-      await tester.enterText(
-        find.byKey(const Key('pickup-field')),
-        'Điểm đón thử',
-      );
-      await tester.runAsync(
-        () => precacheImage(
-          const AssetImage('assets/images/booking-vehicles.png'),
-          tester.element(find.byType(RideLocationPicker)),
-        ),
-      );
-      await tester.pumpAndSettle();
-      await capturePreview(
-        tester,
-        capture,
-        'booking-picker-${size.width.toInt()}x${size.height.toInt()}',
-      );
-
-      await tester.enterText(
-        find.byKey(const Key('destination-field')),
-        'Chợ Bến',
-      );
-      await tester.pumpAndSettle();
-      final sheet = find.byType(BottomSheet);
-      expect(
-        find.descendant(of: sheet, matching: find.text('Sân bay Tân Sơn Nhất')),
-        findsNothing,
-      );
-      await tester.tap(
-        find.descendant(of: sheet, matching: find.text('Chợ Bến Thành')),
-      );
-      await tester.pumpAndSettle();
-      await tester.tap(find.text('Áp dụng'));
-      await tester.pumpAndSettle();
-      expect(sheet, findsNothing);
-      expect(
-        tester.widget<GoongMap>(find.byType(GoongMap)).interactive,
-        isTrue,
-      );
-      expect(
-        find.text('Trung tâm TP. Hồ Chí Minh → Chợ Bến Thành'),
-        findsNothing,
-      );
-      await tester.tap(find.text('Tài khoản'));
-      await tester.pumpAndSettle();
-      expect(find.text('Hồ sơ khách hàng'), findsOneWidget);
-      expect(tester.takeException(), isNull);
-      await tester.pumpWidget(const SizedBox());
-    }
-  });
 
   testWidgets(
-    'empty history shows three HCM landmarks and selecting one prefills destination',
+    'phone layouts select both fields and apply vehicle/payment with no GPS',
     (tester) async {
-      await tester.pumpWidget(
-        const MaterialApp(
-          home: RiderHome(
-            fullName: 'Khách',
-            account: SizedBox(),
-            recentDestinations: [],
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.resetDevicePixelRatio);
+      addTearDown(tester.view.resetPhysicalSize);
+      for (final size in [
+        const Size(360, 640),
+        const Size(390, 844),
+        const Size(430, 932),
+      ]) {
+        tester.view.physicalSize = size;
+        final lookup = FakePlaces();
+        final capture = GlobalKey();
+        await tester.pumpWidget(
+          RepaintBoundary(
+            key: capture,
+            child: MaterialApp(
+              theme: ThemeData(fontFamily: 'BeVietnamPro'),
+              home: RiderHome(
+                fullName: 'Khách',
+                account: const Text('Hồ sơ'),
+                places: lookup,
+              ),
+            ),
           ),
-        ),
-      );
-      await tester.pumpAndSettle();
-      expect(find.text('Điểm đến gần đây'), findsNothing);
-      expect(find.text('Điểm đến đề xuất'), findsOneWidget);
-      for (final place in suggestedDestinations) {
-        expect(find.text(place.name), findsOneWidget);
+        );
+        await tester.pumpAndSettle();
+        expect(find.byTooltip('Về vị trí hiện tại'), findsNothing);
+        await tester.tap(find.text('Bạn muốn đi đâu?'));
+        await tester.pumpAndSettle();
+        expect(
+          tester.widget<GoongMap>(find.byType(GoongMap)).interactive,
+          isFalse,
+        );
+        expect(find.byTooltip('Dùng vị trí hiện tại'), findsNothing);
+        await choose(tester, 'pickup-field', 'Đại học Sài Gòn');
+        await choose(tester, 'destination-field', 'Chợ Bến Thành');
+        expect(find.text('273 An Dương Vương, Quận 5'), findsOneWidget);
+        await tester.ensureVisible(find.text('7 chỗ'));
+        await tester.tap(find.text('7 chỗ'));
+        await tester.ensureVisible(find.text('Ví SwiftRide'));
+        await tester.tap(find.text('Ví SwiftRide'));
+        await tester.tap(find.text('Áp dụng'));
+        await tester.pumpAndSettle();
+        expect(find.byType(RideLocationPicker), findsNothing);
+        expect(lookup.detailCalls, 2);
+        await tester.tap(find.text('Bạn muốn đi đâu?'));
+        await tester.pumpAndSettle();
+        final picker = tester.widget<RideLocationPicker>(
+          find.byType(RideLocationPicker),
+        );
+        expect(picker.pickup.address, '273 An Dương Vương, Quận 5');
+        expect(picker.pickup.point!.latitude, 10.759);
+        expect(picker.destination!.address, 'Đường Lê Lợi, Quận 1');
+        expect(picker.vehicleType, RideVehicleType.car7Seats);
+        expect(picker.paymentMethod, RidePaymentMethod.swiftRideWallet);
+        expect(
+          RideLocations(
+            picker.pickup,
+            picker.destination!,
+            picker.vehicleType,
+            picker.paymentMethod,
+          ).toTripRequest()['pickupAddress'],
+          picker.pickup.address,
+        );
+        await capturePreview(
+          tester,
+          capture,
+          'place-search-${size.width.toInt()}x${size.height.toInt()}',
+        );
+        expect(tester.takeException(), isNull);
+        await tester.pumpWidget(const SizedBox());
       }
-      await tester.tap(find.text('Chợ Bến Thành'));
-      await tester.pumpAndSettle();
-      final field = tester.widget<TextFormField>(
-        find.byKey(const Key('destination-field')),
-      );
-      expect(field.controller!.text, 'Chợ Bến Thành');
-      await tester.enterText(
-        find.byKey(const Key('pickup-field')),
-        'Điểm đón thử',
-      );
-      await tester.tap(find.text('Áp dụng'));
-      await tester.pumpAndSettle();
-      expect(
-        find.text('Trung tâm TP. Hồ Chí Minh → Chợ Bến Thành'),
-        findsNothing,
-      );
-      expect(tester.takeException(), isNull);
-      await tester.pumpWidget(const SizedBox());
     },
   );
 
   testWidgets(
-    'location picker validates destination, changes pickup and cancels edits',
+    'typing alone cannot apply and editing invalidates old coordinates',
     (tester) async {
-      tester.view.physicalSize = const Size(360, 640);
-      tester.view.devicePixelRatio = 1;
-      addTearDown(tester.view.resetPhysicalSize);
-      addTearDown(tester.view.resetDevicePixelRatio);
-      addTearDown(tester.view.resetViewInsets);
-      await tester.pumpWidget(
-        const MaterialApp(
-          home: RiderHome(fullName: 'Khách', account: SizedBox()),
-        ),
-      );
-      await tester.pumpAndSettle();
-      await tester.tap(find.text('Bạn muốn đi đâu?'));
-      await tester.pumpAndSettle();
-      await tester.tap(find.text('Áp dụng'));
-      await tester.pumpAndSettle();
-      expect(find.text('Vui lòng nhập điểm đến.'), findsOneWidget);
-      tester.view.viewInsets = const FakeViewPadding(bottom: 240);
-      await tester.pumpAndSettle();
-      expect(tester.takeException(), isNull);
-      await tester.enterText(find.byKey(const Key('pickup-field')), 'Nhà thờ');
-      await tester.pumpAndSettle();
-      for (final place in suggestedDestinations) {
-        expect(
-          find.descendant(
-            of: find.byType(BottomSheet),
-            matching: find.text(place.name),
-          ),
-          findsOneWidget,
-        );
-      }
-      final destinationSuggestion = find.descendant(
-        of: find.byType(BottomSheet),
-        matching: find.text('Nhà thờ Đức Bà'),
-      );
-      await tester.ensureVisible(destinationSuggestion);
-      await tester.tap(destinationSuggestion);
-      await tester.pumpAndSettle();
-      expect(
-        tester
-            .widget<TextFormField>(find.byKey(const Key('pickup-field')))
-            .controller!
-            .text,
-        'Nhà thờ',
-      );
-      expect(
-        tester
-            .widget<TextFormField>(find.byKey(const Key('destination-field')))
-            .controller!
-            .text,
-        'Nhà thờ Đức Bà',
-      );
-      expect(find.byTooltip('Thông tin địa điểm'), findsNothing);
-      tester.view.resetViewInsets();
-      await tester.pumpAndSettle();
+      final lookup = FakePlaces();
+      await openPicker(tester, lookup);
       await tester.enterText(
-        find.byKey(const Key('destination-field')),
+        find.byKey(const Key('pickup-field')),
         'Địa chỉ tự nhập',
       );
       await tester.tap(find.text('Áp dụng'));
       await tester.pumpAndSettle();
-      expect(find.text('Nhà thờ → Địa chỉ tự nhập'), findsNothing);
-      await tester.tap(find.text('Bạn muốn đi đâu?'));
+      expect(
+        find.text('Vui lòng chọn điểm đón từ kết quả tìm kiếm.'),
+        findsOneWidget,
+      );
+      expect(find.text('Vui lòng nhập điểm đến.'), findsOneWidget);
+      await choose(tester, 'pickup-field', 'Đại học Sài Gòn');
+      await choose(tester, 'destination-field', 'Chợ Bến Thành');
+      await tester.enterText(
+        find.byKey(const Key('pickup-field')),
+        'Địa chỉ khác',
+      );
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Áp dụng'));
+      await tester.pumpAndSettle();
+      expect(find.byType(RideLocationPicker), findsOneWidget);
+      expect(
+        find.text('Vui lòng chọn điểm đón từ kết quả tìm kiếm.'),
+        findsOneWidget,
+      );
+      expect(find.text('273 An Dương Vương, Quận 5'), findsNothing);
+      await tester.pumpWidget(const SizedBox());
+    },
+  );
+
+  testWidgets(
+    'late autocomplete and detail results cannot overwrite another field',
+    (tester) async {
+      final lookup = FakePlaces();
+      final old = Completer<List<PlacePrediction>>();
+      lookup.pendingSearch = old;
+      await openPicker(tester, lookup);
+      await tester.enterText(
+        find.byKey(const Key('pickup-field')),
+        'Old campus',
+      );
+      await tester.pump(const Duration(milliseconds: 360));
+      lookup.pendingSearch = null;
+      await tester.enterText(
+        find.byKey(const Key('destination-field')),
+        'Chợ Bến Thành',
+      );
+      await tester.pump(const Duration(milliseconds: 360));
+      await tester.pumpAndSettle();
+      old.complete([const PlacePrediction('OLD RESULT', 'old')]);
+      await tester.pumpAndSettle();
+      expect(find.text('OLD RESULT'), findsNothing);
+      final details = Completer<RidePlace>();
+      lookup.pendingDetails = details;
+      await tester.tap(find.byKey(const ValueKey('place-Chợ Bến Thành')));
+      await tester.pump();
+      await tester.enterText(
+        find.byKey(const Key('destination-field')),
+        'Changed',
+      );
+      details.complete(FakePlaces.destination);
+      await tester.pumpAndSettle();
+      expect(
+        tester
+            .widget<TextFormField>(find.byKey(const Key('destination-field')))
+            .controller!
+            .text,
+        'Changed',
+      );
+      expect(
+        tester
+            .widget<TextFormField>(find.byKey(const Key('pickup-field')))
+            .controller!
+            .text,
+        'Old campus',
+      );
+      await tester.pumpWidget(const SizedBox());
+    },
+  );
+
+  testWidgets(
+    'place lookup error can retry and selection never changes the other field',
+    (tester) async {
+      final lookup = FakePlaces()..failSearch = true;
+      await openPicker(tester, lookup);
+      await tester.enterText(
+        find.byKey(const Key('pickup-field')),
+        'Đại học Sài Gòn',
+      );
+      await tester.pump(const Duration(milliseconds: 360));
+      await tester.pumpAndSettle();
+      expect(find.text('Lỗi tìm địa điểm thử nghiệm'), findsOneWidget);
+      lookup.failSearch = false;
+      await tester.tap(find.text('Thử lại'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const ValueKey('place-Đại học Sài Gòn')));
       await tester.pumpAndSettle();
       expect(
         tester
@@ -240,75 +208,10 @@ void main() {
             .text,
         isEmpty,
       );
-      await tester.enterText(
-        find.byKey(const Key('destination-field')),
-        'Địa chỉ chưa lưu',
-      );
-      await tester.tap(find.byTooltip('Đóng'));
-      await tester.pumpAndSettle();
-      expect(find.text('Nhà thờ → Địa chỉ tự nhập'), findsNothing);
-      await tester.tap(find.text('Bạn muốn đi đâu?'));
-      await tester.pumpAndSettle();
-      final destinationField = find.byKey(const Key('destination-field'));
-      expect(
-        tester.widget<TextFormField>(destinationField).controller!.text,
-        isEmpty,
-      );
-      await tester.enterText(destinationField, 'Địa chỉ khác');
-      await tester.enterText(destinationField, '');
-      await tester.tap(find.byTooltip('Đóng'));
-      await tester.pumpAndSettle();
-      await tester.tap(find.text('Bạn muốn đi đâu?'));
-      await tester.pumpAndSettle();
-      expect(
-        tester.widget<TextFormField>(destinationField).controller!.text,
-        isEmpty,
-      );
-      expect(tester.takeException(), isNull);
+      expect(find.text('273 An Dương Vương, Quận 5'), findsOneWidget);
       await tester.pumpWidget(const SizedBox());
     },
   );
-  testWidgets('vehicle and payment choices apply together', (tester) async {
-    tester.view.physicalSize = const Size(390, 844);
-    tester.view.devicePixelRatio = 1;
-    addTearDown(tester.view.resetPhysicalSize);
-    addTearDown(tester.view.resetDevicePixelRatio);
-    await tester.pumpWidget(
-      const MaterialApp(
-        home: RiderHome(fullName: 'Khách', account: SizedBox()),
-      ),
-    );
-    await tester.pumpAndSettle();
-    await tester.tap(find.text('Bạn muốn đi đâu?'));
-    await tester.pumpAndSettle();
-    await tester.enterText(
-      find.byKey(const Key('pickup-field')),
-      'Điểm đón thử',
-    );
-    await tester.enterText(
-      find.byKey(const Key('destination-field')),
-      'Chợ Bến Thành',
-    );
-    await tester.ensureVisible(find.text('7 chỗ'));
-    await tester.tap(find.text('7 chỗ'));
-    await tester.ensureVisible(find.text('Ví SwiftRide'));
-    await tester.tap(find.text('Ví SwiftRide'));
-    await tester.tap(find.text('Áp dụng'));
-    await tester.pumpAndSettle();
-    expect(
-      find.text('Trung tâm TP. Hồ Chí Minh → Chợ Bến Thành'),
-      findsNothing,
-    );
-    await tester.tap(find.text('Bạn muốn đi đâu?'));
-    await tester.pumpAndSettle();
-    final picker = tester.widget<RideLocationPicker>(
-      find.byType(RideLocationPicker),
-    );
-    expect(picker.vehicleType, RideVehicleType.car7Seats);
-    expect(picker.paymentMethod, RidePaymentMethod.swiftRideWallet);
-    expect(tester.takeException(), isNull);
-    await tester.pumpWidget(const SizedBox());
-  });
   testWidgets(
     'home panel collapses and picker close stays fixed while scrolling',
     (tester) async {
@@ -364,99 +267,64 @@ void main() {
       await tester.pumpWidget(const SizedBox());
     },
   );
-
-  testWidgets(
-    'location button uses device coordinates and handles permission denial',
-    (tester) async {
-      final original = GeolocatorPlatform.instance;
-      final location = _TestGeolocator();
-      GeolocatorPlatform.instance = location;
-      addTearDown(() => GeolocatorPlatform.instance = original);
-      await tester.pumpWidget(
-        const MaterialApp(
-          home: RiderHome(fullName: 'Khách', account: SizedBox()),
-        ),
-      );
-      await tester.pumpAndSettle();
-      await tester.tap(find.byTooltip('Về vị trí hiện tại'));
-      await tester.pumpAndSettle();
-      expect(location.requested, isTrue);
-      await tester.tap(find.text('Bạn muốn đi đâu?'));
-      await tester.pumpAndSettle();
-      final picker = tester.widget<RideLocationPicker>(
-        find.byType(RideLocationPicker),
-      );
-      expect(picker.pickup.name, 'Vị trí hiện tại');
-      expect(picker.pickup.point!.latitude, 10.81);
-      expect(picker.pickup.point!.longitude, closeTo(106.72, .000001));
-      await tester.enterText(
-        find.byKey(const Key('pickup-field')),
-        'Địa chỉ tạm',
-      );
-      location.requested = false;
-      location.pending = Completer<Position>();
-      await tester.tap(find.byTooltip('Dùng vị trí hiện tại'));
-      await tester.pump();
-      expect(
-        find.descendant(
-          of: find.byType(BottomSheet),
-          matching: find.byType(CircularProgressIndicator),
-        ),
-        findsOneWidget,
-      );
-      location.pending!.complete(location.position);
-      await tester.pumpAndSettle();
-      location.pending = null;
-      expect(location.requested, isTrue);
-      expect(
-        tester
-            .widget<TextFormField>(find.byKey(const Key('pickup-field')))
-            .controller!
-            .text,
-        'Vị trí hiện tại',
-      );
-
-      await tester.tap(find.byTooltip('Đóng'));
-      await tester.pumpAndSettle();
-      location.permission = LocationPermission.deniedForever;
-      location.requested = false;
-      await tester.tap(find.byTooltip('Về vị trí hiện tại'));
-      await tester.pumpAndSettle();
-      expect(location.requested, isFalse);
-      expect(
-        find.textContaining('Hãy cho phép truy cập vị trí'),
-        findsOneWidget,
-      );
-      await tester.pumpWidget(const SizedBox());
-    },
-  );
 }
 
-class _TestGeolocator extends GeolocatorPlatform {
-  LocationPermission permission = LocationPermission.whileInUse;
-  bool requested = false;
-  Completer<Position>? pending;
+Future<void> openPicker(WidgetTester tester, PlaceLookup lookup) async {
+  await tester.pumpWidget(
+    MaterialApp(
+      home: Scaffold(
+        body: RideLocationPicker(
+          pickup: defaultPickup,
+          recentDestinations: const [],
+          vehicleType: RideVehicleType.motorcycle,
+          paymentMethod: RidePaymentMethod.cash,
+          places: lookup,
+        ),
+      ),
+    ),
+  );
+  await tester.pumpAndSettle();
+}
+
+Future<void> choose(WidgetTester tester, String field, String query) async {
+  await tester.ensureVisible(find.byKey(Key(field)));
+  await tester.enterText(find.byKey(Key(field)), query);
+  await tester.pump(const Duration(milliseconds: 360));
+  await tester.pumpAndSettle();
+  final result = find.byKey(ValueKey('place-$query'));
+  await tester.ensureVisible(result);
+  await tester.tap(result);
+  await tester.pumpAndSettle();
+}
+
+class FakePlaces implements PlaceLookup {
+  static const pickup = RidePlace(
+    'Đại học Sài Gòn',
+    '273 An Dương Vương, Quận 5',
+    LatLng(10.759, 106.682),
+    'Đại học Sài Gòn',
+  );
+  static const destination = RidePlace(
+    'Chợ Bến Thành',
+    'Đường Lê Lợi, Quận 1',
+    LatLng(10.7725, 106.698),
+    'Chợ Bến Thành',
+  );
+  int detailCalls = 0;
+  bool failSearch = false;
+  Completer<List<PlacePrediction>>? pendingSearch;
+  Completer<RidePlace>? pendingDetails;
   @override
-  Future<LocationPermission> checkPermission() async => permission;
-  @override
-  Future<Position> getCurrentPosition({
-    LocationSettings? locationSettings,
-  }) async {
-    requested = true;
-    if (pending != null) return pending!.future;
-    return position;
+  Future<List<PlacePrediction>> search(String input) async {
+    if (pendingSearch != null) return pendingSearch!.future;
+    if (failSearch) throw const AuthFailure('Lỗi tìm địa điểm thử nghiệm');
+    return [PlacePrediction(input, input)];
   }
 
-  Position get position => Position(
-    latitude: 10.81,
-    longitude: 106.72,
-    timestamp: DateTime(2026),
-    accuracy: 5,
-    altitude: 0,
-    altitudeAccuracy: 0,
-    heading: 0,
-    headingAccuracy: 0,
-    speed: 0,
-    speedAccuracy: 0,
-  );
+  @override
+  Future<RidePlace> details(String placeId) async {
+    detailCalls++;
+    if (pendingDetails != null) return pendingDetails!.future;
+    return placeId == pickup.placeId ? pickup : destination;
+  }
 }

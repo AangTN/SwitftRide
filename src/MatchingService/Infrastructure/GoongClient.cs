@@ -86,6 +86,29 @@ public sealed class GoongClient(HttpClient client, IConfiguration configuration,
         return suggestions;
     }
 
+    public async Task<PlaceDetails?> GetPlaceDetailsAsync(string placeId, CancellationToken ct)
+    {
+        var uri = BuildUri("Place/Detail", new Dictionary<string, string?> { ["place_id"] = placeId });
+        using var document = await GetDocumentAsync(uri, ct);
+        var root = document.RootElement;
+        if (root.ValueKind != JsonValueKind.Object)
+            throw new MatchingFailureException(502, "goong_place_invalid", "The place provider returned invalid details.");
+        var status = GetStatus(root);
+        if (status is "ZERO_RESULTS" or "NOT_FOUND") return null;
+        EnsureSuccessfulStatus(status);
+        if (!root.TryGetProperty("result", out var result) || result.ValueKind != JsonValueKind.Object ||
+            !result.TryGetProperty("place_id", out var id) || id.ValueKind != JsonValueKind.String || id.GetString() != placeId ||
+            !result.TryGetProperty("name", out var name) || name.ValueKind != JsonValueKind.String || string.IsNullOrWhiteSpace(name.GetString()) ||
+            !result.TryGetProperty("formatted_address", out var address) || address.ValueKind != JsonValueKind.String || string.IsNullOrWhiteSpace(address.GetString()) ||
+            !result.TryGetProperty("geometry", out var geometry) || geometry.ValueKind != JsonValueKind.Object ||
+            !geometry.TryGetProperty("location", out var location) || location.ValueKind != JsonValueKind.Object ||
+            !location.TryGetProperty("lat", out var latitude) || latitude.ValueKind != JsonValueKind.Number || !latitude.TryGetDouble(out var lat) ||
+            !location.TryGetProperty("lng", out var longitude) || longitude.ValueKind != JsonValueKind.Number || !longitude.TryGetDouble(out var lng) ||
+            !double.IsFinite(lat) || !double.IsFinite(lng) || lat is < -90 or > 90 || lng is < -180 or > 180)
+            throw new MatchingFailureException(502, "goong_place_invalid", "The selected place has invalid details or coordinates.");
+        return new PlaceDetails(placeId, name.GetString()!, address.GetString()!, lat, lng);
+    }
+
     private async Task<JsonDocument> GetDocumentAsync(string uri, CancellationToken ct)
     {
         try
