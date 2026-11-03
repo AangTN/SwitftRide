@@ -70,6 +70,12 @@ namespace SwiftRide.Trip.Infrastructure.Migrations
                         .HasColumnType("uniqueidentifier")
                         .HasColumnName("driver_id");
 
+                    b.Property<string>("IdempotencyKey")
+                        .IsRequired()
+                        .HasMaxLength(100)
+                        .HasColumnType("nvarchar(100)")
+                        .HasColumnName("idempotency_key");
+
                     b.Property<string>("DriverNameSnapshot")
                         .HasMaxLength(150)
                         .HasColumnType("nvarchar(150)")
@@ -97,6 +103,16 @@ namespace SwiftRide.Trip.Infrastructure.Migrations
                         .HasColumnType("float")
                         .HasColumnName("pickup_longitude");
 
+                    b.Property<string>("PaymentId")
+                        .HasMaxLength(100)
+                        .HasColumnType("nvarchar(100)")
+                        .HasColumnName("payment_id");
+
+                    b.Property<string>("PaymentStatus")
+                        .HasMaxLength(30)
+                        .HasColumnType("nvarchar(30)")
+                        .HasColumnName("payment_status");
+
                     b.Property<string>("PlateNumberSnapshot")
                         .HasMaxLength(20)
                         .HasColumnType("nvarchar(20)")
@@ -110,6 +126,11 @@ namespace SwiftRide.Trip.Infrastructure.Migrations
                     b.Property<Guid>("RiderId")
                         .HasColumnType("uniqueidentifier")
                         .HasColumnName("rider_id");
+
+                    b.Property<int>("StateVersion")
+                        .IsConcurrencyToken()
+                        .HasColumnType("int")
+                        .HasColumnName("state_version");
 
                     b.Property<string>("Status")
                         .IsRequired()
@@ -137,10 +158,38 @@ namespace SwiftRide.Trip.Infrastructure.Migrations
 
                     b.HasIndex("RiderId", "CreatedAt");
 
+                    b.HasIndex("RiderId", "IdempotencyKey")
+                        .IsUnique()
+                        .HasFilter("[idempotency_key] <> ''");
+
                     b.ToTable("trips", null, t =>
                         {
                             t.HasCheckConstraint("ck_trip_amount", "[agreed_amount] IS NULL OR [agreed_amount] >= 0");
                         });
+                });
+
+            modelBuilder.Entity("SwiftRide.Trip.Domain.TripProposal", b =>
+                {
+                    b.Property<Guid>("Id").ValueGeneratedOnAdd().HasColumnType("uniqueidentifier").HasColumnName("id");
+                    b.Property<decimal?>("Amount").HasPrecision(18, 2).HasColumnType("decimal(18,2)").HasColumnName("amount");
+                    b.Property<DateTimeOffset>("CreatedAt").HasColumnType("datetimeoffset").HasColumnName("created_at");
+                    b.Property<string>("Currency").IsRequired().HasMaxLength(3).HasColumnType("nvarchar(3)").HasColumnName("currency");
+                    b.Property<Guid?>("DriverId").HasColumnType("uniqueidentifier").HasColumnName("driver_id");
+                    b.Property<DateTimeOffset?>("DriverResponseDeadline").HasColumnType("datetimeoffset").HasColumnName("driver_response_deadline");
+                    b.Property<string>("DriverNameSnapshot").HasMaxLength(150).HasColumnType("nvarchar(150)").HasColumnName("driver_name_snapshot");
+                    b.Property<string>("PlateNumberSnapshot").HasMaxLength(20).HasColumnType("nvarchar(20)").HasColumnName("plate_number_snapshot");
+                    b.Property<string>("QuoteId").HasMaxLength(100).HasColumnType("nvarchar(100)").HasColumnName("quote_id");
+                    b.Property<DateTimeOffset?>("ResolvedAt").HasColumnType("datetimeoffset").HasColumnName("resolved_at");
+                    b.Property<DateTimeOffset?>("RiderApprovalDeadline").HasColumnType("datetimeoffset").HasColumnName("rider_approval_deadline");
+                    b.Property<DateTimeOffset?>("RiderRespondedAt").HasColumnType("datetimeoffset").HasColumnName("rider_responded_at");
+                    b.Property<string>("Status").IsRequired().HasMaxLength(30).HasColumnType("nvarchar(30)").HasColumnName("status");
+                    b.Property<Guid>("TripId").HasColumnType("uniqueidentifier").HasColumnName("trip_id");
+                    b.Property<string>("VehicleImageKeySnapshot").HasMaxLength(500).HasColumnType("nvarchar(500)").HasColumnName("vehicle_image_key_snapshot");
+                    b.Property<string>("VehicleNameSnapshot").HasMaxLength(150).HasColumnType("nvarchar(150)").HasColumnName("vehicle_name_snapshot");
+                    b.HasKey("Id");
+                    b.HasIndex("Status", "DriverResponseDeadline");
+                    b.HasIndex("TripId", "DriverId").IsUnique();
+                    b.ToTable("trip_proposals", (string)null);
                 });
 
             modelBuilder.Entity("SwiftRide.Trip.Domain.TripStatusHistory", b =>
@@ -162,6 +211,10 @@ namespace SwiftRide.Trip.Infrastructure.Migrations
                         .HasMaxLength(30)
                         .HasColumnType("nvarchar(30)")
                         .HasColumnName("from_status");
+
+                    b.Property<string>("Reason")
+                        .HasColumnType("nvarchar(max)")
+                        .HasColumnName("reason");
 
                     b.Property<string>("ToStatus")
                         .IsRequired()
@@ -189,9 +242,19 @@ namespace SwiftRide.Trip.Infrastructure.Migrations
                         .IsRequired();
                 });
 
+            modelBuilder.Entity("SwiftRide.Trip.Domain.TripProposal", b =>
+                {
+                    b.HasOne("SwiftRide.Trip.Domain.Trip", null)
+                        .WithMany("Proposals")
+                        .HasForeignKey("TripId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+                });
+
             modelBuilder.Entity("SwiftRide.Trip.Domain.Trip", b =>
                 {
                     b.Navigation("History");
+                    b.Navigation("Proposals");
                 });
 #pragma warning restore 612, 618
         }

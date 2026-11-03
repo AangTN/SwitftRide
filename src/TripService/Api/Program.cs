@@ -7,6 +7,17 @@ var builder = WebApplication.CreateBuilder(args);
 builder.Services.AddServiceDefaults(builder.Configuration, builder.Environment.IsDevelopment());
 builder.Services.AddDbContext<TripDbContext>(o => o.UseSqlServer(builder.Configuration.GetConnectionString("TripDb")
     ?? throw new InvalidOperationException("ConnectionStrings:TripDb is required.")));
+builder.Services.AddSingleton(TimeProvider.System);
+builder.Services.Configure<TripWorkflowOptions>(builder.Configuration.GetSection("TripWorkflow"));
+builder.Services.AddSignalR();
+builder.Services.AddSingleton<Microsoft.AspNetCore.SignalR.IUserIdProvider, SubjectUserIdProvider>();
+builder.Services.AddScoped<ITripRealtimePublisher, TripRealtimePublisher>();
+if (builder.Configuration.GetValue("RabbitMq:Enabled", true)) builder.Services.AddScoped<ITripMatchingNotifier, TripMatchingNotifier>();
+else builder.Services.AddScoped<ITripMatchingNotifier, NoopTripMatchingNotifier>();
+if (builder.Configuration.GetValue("RabbitMq:Enabled", true)) builder.Services.AddScoped<ITripPaymentNotifier, TripPaymentNotifier>();
+else builder.Services.AddScoped<ITripPaymentNotifier, NoopTripPaymentNotifier>();
+builder.Services.AddScoped<TripExceptionFilter>();
+builder.Services.AddHostedService<ProposalExpiryWorker>();
 builder.Services.AddHealthChecks().AddCheck<DatabaseHealthCheck>("Trip-db");
 var app = builder.Build();
 if (app.Configuration.GetValue("Database:MigrateOnStartup", false))
@@ -15,6 +26,7 @@ if (app.Configuration.GetValue("Database:MigrateOnStartup", false))
     await scope.ServiceProvider.GetRequiredService<TripDbContext>().Database.MigrateAsync();
 }
 app.UseServiceDefaults();
+app.MapHub<TripHub>("/api/trips/realtime");
 app.Run();
 
 public sealed class DatabaseHealthCheck(IServiceScopeFactory scopes) : IHealthCheck

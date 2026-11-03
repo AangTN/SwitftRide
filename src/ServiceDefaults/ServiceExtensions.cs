@@ -57,6 +57,16 @@ public static class ServiceExtensions
                 IssuerSigningKey = new RsaSecurityKey(rsa), ValidAlgorithms = [SecurityAlgorithms.RsaSha256],
                 NameClaimType = "sub", RoleClaimType = "roles", ClockSkew = TimeSpan.Zero
             };
+            options.Events = new JwtBearerEvents
+            {
+                OnMessageReceived = context =>
+                {
+                    // Browsers cannot attach an Authorization header during the SignalR WebSocket upgrade.
+                    if (context.HttpContext.Request.Path.StartsWithSegments("/api/trips/realtime"))
+                        context.Token = context.Request.Query["access_token"];
+                    return Task.CompletedTask;
+                }
+            };
         });
         services.AddAuthorization();
         services.Configure<ForwardedHeadersOptions>(o =>
