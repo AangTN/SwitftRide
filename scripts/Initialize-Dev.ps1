@@ -28,6 +28,7 @@ if (!(Test-Path -LiteralPath $envPath)) {
         'MATCHING_DB_PASSWORD=' + (New-DevSecret)
         'RABBITMQ_PASSWORD=' + (New-DevSecret)
         'OTP_HMAC_SECRET=' + (New-DevSecret)
+        'GOONG_API_KEY='
     )
     [System.IO.File]::WriteAllText($envPath, ($settings -join "`n") + "`n")
 }

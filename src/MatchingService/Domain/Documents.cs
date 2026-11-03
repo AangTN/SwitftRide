@@ -16,9 +16,12 @@ public sealed class DriverAvailability
 {
     public string Id { get; set; } = ""; // Auth user UUID in canonical string form.
     public string Status { get; set; } = "Offline";
+    public string VehicleType { get; set; } = "Motorbike";
     public GeoPoint? Location { get; set; }
     public DateTime? LocationUpdatedAt { get; set; }
     public string? CurrentTripId { get; set; }
+    public string? CurrentProposalId { get; set; }
+    public DateTime? ReservedUntil { get; set; }
     public DateTime UpdatedAt { get; set; }
 }
 
@@ -32,6 +35,8 @@ public sealed class FareQuote
 {
     public string Id { get; set; } = Guid.NewGuid().ToString();
     public string TripId { get; set; } = "";
+    public string ProposalId { get; set; } = "";
+    public string VehicleType { get; set; } = "Motorbike";
     public double DistanceMeters { get; set; }
     public int EstimatedDurationSeconds { get; set; }
     public PricingSnapshot PricingSnapshot { get; set; } = new();

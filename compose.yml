@@ -142,6 +142,7 @@ services:
       <<: *api-environment
       ConnectionStrings__MatchingDb: mongodb://matching_app:${MATCHING_DB_PASSWORD}@mongo:27017/MatchingDB?authSource=MatchingDB
       Seed__Enabled: "true"
+      Goong__ApiKey: ${GOONG_API_KEY:-}
     ports: ["127.0.0.1:5103:8080"]
     volumes: ["./.secrets/auth-public.pem:/run/keys/auth-public.pem:ro"]
     depends_on:

@@ -13,6 +13,27 @@ builder.Services.AddSingleton<IMongoClient>(_ => new MongoClient(builder.Configu
 builder.Services.AddSingleton(sp => new MatchingDatabase(sp.GetRequiredService<IMongoClient>(),
     builder.Configuration["Mongo:Database"] ?? "MatchingDB"));
 builder.Services.AddSingleton<IDriverProfileReader>(sp => sp.GetRequiredService<MatchingDatabase>());
+builder.Services.AddSingleton<IMatchingStore>(sp => sp.GetRequiredService<MatchingDatabase>());
+builder.Services.AddOptions<MatchingOptions>()
+    .Bind(builder.Configuration.GetSection("Matching"))
+    .Validate(options => options.MaxSearchDistanceMeters > 0 && options.MaxCandidates > 0 &&
+        options.LocationMaxAgeSeconds > 0 && options.ReservationSeconds > 0 && options.QuoteValiditySeconds > 0,
+        "Matching limits and expiry durations must be positive.")
+    .ValidateOnStart();
+builder.Services.AddOptions<PricingOptions>()
+    .Bind(builder.Configuration.GetSection("Pricing"))
+    .Validate(options => options.PerKilometer >= 0 && options.PerMinute >= 0 && options.Toll >= 0 &&
+        options.Surge > 0 && options.PromotionFactor > 0 && options.TaxRate is >= 0 and <= 1,
+        "Pricing rates must be non-negative and factors must be positive.")
+    .ValidateOnStart();
+builder.Services.AddSingleton(sp => sp.GetRequiredService<Microsoft.Extensions.Options.IOptions<MatchingOptions>>().Value);
+builder.Services.AddSingleton(sp => sp.GetRequiredService<Microsoft.Extensions.Options.IOptions<PricingOptions>>().Value);
+builder.Services.AddHttpClient<IGoongClient, GoongClient>(client =>
+{
+    client.BaseAddress = new Uri("https://rsapi.goong.io/");
+    client.Timeout = TimeSpan.FromSeconds(10);
+});
+builder.Services.AddScoped<MatchingCoordinator>();
 builder.Services.AddHealthChecks().AddCheck<MatchingHealthCheck>("matching-db");
 var app = builder.Build();
 if (app.Configuration.GetValue("Database:InitializeOnStartup", true))
