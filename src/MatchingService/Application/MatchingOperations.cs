@@ -9,6 +9,7 @@ public sealed class MatchingFailureException(int statusCode, string code, string
 }
 
 public sealed record DriverLocationUpdate(bool Online, double? Latitude, double? Longitude);
+public sealed record DriverGpsRequest(double Latitude, double Longitude);
 
 public sealed record DriverMatchRequest(
     Guid TripId,
@@ -49,7 +50,7 @@ public sealed class MatchingOptions
     public double MaxSearchDistanceMeters { get; set; } = 10_000;
     public int MaxCandidates { get; set; } = 50;
     public int LocationMaxAgeSeconds { get; set; } = 120;
-    public int ReservationSeconds { get; set; } = 90;
+    public int ReservationSeconds { get; set; } = 120;
     public int QuoteValiditySeconds { get; set; } = 300;
 }
 
@@ -65,6 +66,7 @@ public sealed class PricingOptions
 
 public interface IMatchingStore
 {
+    Task<DriverAvailability?> UpdateGpsAsync(string driverId, DriverGpsRequest gps, DateTime now, CancellationToken ct);
     Task<bool> UpdateAvailabilityAsync(
         string driverId, string vehicleType, DriverLocationUpdate update, DateTime now, CancellationToken ct);
     Task<IReadOnlyList<DriverAvailability>> FindNearbyAvailableDriversAsync(

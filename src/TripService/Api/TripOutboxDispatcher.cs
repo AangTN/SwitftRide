@@ -52,10 +52,21 @@ public sealed class TripOutboxDispatcher(TripDbContext db, IPublishEndpoint bus,
                 switch (message.Kind)
                 {
                     case TripMessageKind.FindDriver:
-                        await PublishAsync<TripMatchingRequested>(message, timeout.Token);
+                        // Hydrate route data from Trip as well, so pending outbox rows
+                        // written by the older contract (ids only) survive this upgrade.
+                        var request = JsonSerializer.Deserialize<TripMatchingRequested>(message.Payload)!;
+                        await bus.Publish(request with
+                        {
+                            PickupLatitude = trip.PickupLatitude, PickupLongitude = trip.PickupLongitude,
+                            DestinationLatitude = trip.DestinationLatitude, DestinationLongitude = trip.DestinationLongitude,
+                            VehicleType = trip.VehicleType
+                        }, c => c.MessageId = message.Id, timeout.Token);
                         break;
                     case TripMessageKind.ReleaseDriver:
                         await PublishAsync<DriverReservationReleaseRequested>(message, timeout.Token);
+                        break;
+                    case TripMessageKind.ConfirmDriver:
+                        await PublishAsync<DriverReservationConfirmed>(message, timeout.Token);
                         break;
                     case TripMessageKind.RequestPayment:
                         await PublishAsync<PaymentRequested>(message, timeout.Token);

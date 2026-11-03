@@ -13,6 +13,7 @@ public sealed class Trip
     public double PickupLatitude { get; set; }
     public double PickupLongitude { get; set; }
     public string DestinationAddress { get; set; } = "";
+    public string VehicleType { get; set; } = "Motorbike";
     public double DestinationLatitude { get; set; }
     public double DestinationLongitude { get; set; }
     public TripStatus Status { get; set; } = TripStatus.Requested;

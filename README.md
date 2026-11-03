@@ -71,20 +71,17 @@ Các API dưới đây đi qua Gateway (`http://localhost:5000`) và yêu cầu 
 
 | API | Quyền | Hành vi |
 |---|---|---|
-| `PUT /api/matching/drivers/me/availability` | Driver | Gửi vị trí và đặt tài xế Available/Offline; vị trí cần thiết khi online |
-| `POST /api/matching/proposals/assign` | Rider | Tìm tài xế gần nhất có vị trí mới, rồi atomically khóa tài xế cho `tripId`/`proposalId` |
-| `POST /api/matching/reservations/{proposalId}/accept?tripId=...` | Driver | Xác nhận khóa của chính tài xế; chuyển trạng thái sang Busy |
-| `POST /api/matching/reservations/{proposalId}/decline?tripId=...` | Driver | Từ chối khóa của chính tài xế; trả tài xế về Available |
-| `POST /api/matching/quotes` | Rider | Lấy tuyến Goong, tính giá và lưu snapshot cho proposal |
+| `PUT /api/matching/drivers/me/availability` | Driver | Bật/tắt nhận chuyến khi chưa bận; bật cần tọa độ hiện tại |
+| `PUT /api/matching/drivers/me/location` | Driver | Cập nhật GPS, cả lúc đang được giữ hoặc chạy chuyến; không đổi trạng thái nhận chuyến |
 | `GET /api/matching/places/geocode?address=...` | Rider, Driver | Tra địa chỉ thành tọa độ bằng Goong |
 | `GET /api/matching/places/search?input=...` | Rider, Driver | Gợi ý địa điểm bằng Goong Places Autocomplete |
 | `GET /api/matching/places/reverse?latitude=...&longitude=...` | Rider, Driver | Tra địa chỉ từ tọa độ bằng Goong |
 
-`proposals/assign` nhận `tripId`, `proposalId`, `pickupLatitude`, `pickupLongitude`, `vehicleType` (`Motorbike`, `Car4Seats`, `Car7Seats`) và danh sách UUID tùy chọn `excludedDriverIds` từ Trip cho các tài xế đã bị từ chối. `quotes` nhận `tripId`, `proposalId`, tọa độ điểm đi/đến và `vehicleType`. Giá áp dụng `p = ((cd*d + ct*t)*s + cm)*eta*(1+T)`: quãng đường/thời gian cơ sở, surge, toll, khuyến mãi và thuế; dùng decimal và làm tròn VND lên tại nửa đồng. Quote lưu snapshot bất biến theo proposal, giữ lại sau khi hết hạn. Vị trí cũ hơn 120 giây không được ghép; khóa hết hạn sau 90 giây và được giải phóng có điều kiện trong lần tìm tiếp theo.
+Khách tạo chuyến qua Trip với điểm đón/đến và `vehicleType` (`Motorbike`, `Car4Seats`, `Car7Seats`). Trip gửi lệnh tìm tài xế/định giá qua RabbitMQ; app không gọi trực tiếp Matching để giữ tài xế hoặc tạo giá chính thức. Matching tìm trong 10 km, loại GPS quá 120 giây. Khách có 90 giây xác nhận cả tài xế và giá, sau đó tài xế có 30 giây trả lời. Trip quyết định hết hạn và gửi lệnh giải phóng qua Outbox. Giá áp dụng `p = ((cd*d + ct*t)*s + cm)*eta*(1+T)`; dùng decimal, làm tròn VND lên tại nửa đồng và lưu snapshot theo proposal.
 
 Đặt `GOONG_API_KEY` trong `.env` để bật tra địa chỉ và định tuyến. Compose chỉ chuyển khóa cho Matching backend; không đưa khóa này vào Flutter. Khi chưa cấu hình, API Goong trả lỗi `503 goong_not_configured` thay vì ước lượng tuyến/giá giả. Có thể chỉnh bán kính tìm kiếm, thời hạn vị trí/khóa/báo giá và đơn giá trong cấu hình `Matching`/`Pricing` của Matching.
 
-Matching chỉ sở hữu hồ sơ, vị trí/trạng thái tài xế, khóa và báo giá MongoDB; không đọc/ghi trực tiếp TripDB. Trip hiện chưa có API proposal và kiểm tra quyền sở hữu trip, nên tích hợp tạo/cancel/hoàn tất chuyến vẫn cần nhóm Trip hoàn thiện. Tài xế được xác nhận giữ trạng thái Busy đến khi Trip tích hợp sự kiện hoàn tất để giải phóng.
+Matching chỉ sở hữu hồ sơ, vị trí/trạng thái tài xế, khóa, báo giá và công việc tích hợp MongoDB; không đọc/ghi trực tiếp TripDB. Trip có API xác nhận/nhận/từ chối chuyến, phát lệnh xác nhận/giải phóng tài xế qua Outbox. Matching chuyển GPS cho Trip để báo đúng khách qua SignalR. Chi tiết API, retry, migration và phần frontend cần nối: [docs/matching-integration.md](docs/matching-integration.md).
 
 ## Chạy service bằng .NET trên máy
 

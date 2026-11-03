@@ -9,6 +9,7 @@ public interface ITripMatchingNotifier
 {
     Task RequestOpenProposalsAsync(TripEntity trip, CancellationToken ct);
     Task ReleaseAsync(TripProposal proposal, string reason, CancellationToken ct);
+    Task ConfirmAsync(TripProposal proposal, CancellationToken ct);
 }
 
 /// <summary>Queues messages in the same database transaction as the Trip changes.</summary>
@@ -19,7 +20,8 @@ public sealed class TripMatchingNotifier(TripDbContext db, TimeProvider clock) :
         var excluded = trip.Proposals.Where(x => x.DriverId is not null).Select(x => x.DriverId!.Value).ToArray();
         foreach (var proposal in trip.Proposals.Where(x => x.Status == ProposalStatus.Searching))
             TripOutboxMessage.Enqueue(db, TripMessageKind.FindDriver, trip.Id, proposal.Id,
-                new TripMatchingRequested(trip.Id, proposal.Id, excluded), clock.GetUtcNow());
+                new TripMatchingRequested(trip.Id, proposal.Id, excluded, trip.PickupLatitude, trip.PickupLongitude,
+                    trip.DestinationLatitude, trip.DestinationLongitude, trip.VehicleType), clock.GetUtcNow());
         return Task.CompletedTask;
     }
 
@@ -28,6 +30,13 @@ public sealed class TripMatchingNotifier(TripDbContext db, TimeProvider clock) :
         if (proposal.DriverId is Guid driver)
             TripOutboxMessage.Enqueue(db, TripMessageKind.ReleaseDriver, proposal.TripId, proposal.Id,
                 new DriverReservationReleaseRequested(proposal.TripId, proposal.Id, driver, reason), clock.GetUtcNow());
+        return Task.CompletedTask;
+    }
+
+    public Task ConfirmAsync(TripProposal proposal, CancellationToken ct)
+    {
+        TripOutboxMessage.Enqueue(db, TripMessageKind.ConfirmDriver, proposal.TripId, proposal.Id,
+            new DriverReservationConfirmed(proposal.TripId, proposal.Id, proposal.DriverId!.Value), clock.GetUtcNow());
         return Task.CompletedTask;
     }
 }

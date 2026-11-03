@@ -33,6 +33,13 @@ public sealed class MatchingDatabase : IDriverProfileReader, IMatchingStore
     public IMongoCollection<FareQuote> Quotes => Database.GetCollection<FareQuote>("fare_quotes");
     public MatchingDatabase(IMongoClient client, string name) => Database = client.GetDatabase(name);
 
+    public Task<DriverAvailability?> UpdateGpsAsync(string driverId, DriverGpsRequest gps, DateTime now, CancellationToken ct) =>
+        Drivers.FindOneAndUpdateAsync<DriverAvailability>(x => x.Id == driverId,
+            Builders<DriverAvailability>.Update
+                .Set(x => x.Location, new GeoPoint { Coordinates = [gps.Longitude, gps.Latitude] })
+                .Set(x => x.LocationUpdatedAt, now).Set(x => x.UpdatedAt, now),
+            new FindOneAndUpdateOptions<DriverAvailability> { ReturnDocument = ReturnDocument.After }, ct)!;
+
     public async Task<bool> UpdateAvailabilityAsync(
         string driverId, string vehicleType, DriverLocationUpdate update, DateTime now, CancellationToken ct)
     {
@@ -55,7 +62,7 @@ public sealed class MatchingDatabase : IDriverProfileReader, IMatchingStore
         try
         {
             var result = await Drivers.UpdateOneAsync(filter, change, new UpdateOptions { IsUpsert = true }, ct);
-            return result.ModifiedCount == 1 || result.UpsertedId is not null;
+            return result.MatchedCount == 1 || result.UpsertedId is not null;
         }
         catch (MongoWriteException exception) when (exception.WriteError?.Code == 11000)
         {
@@ -67,15 +74,8 @@ public sealed class MatchingDatabase : IDriverProfileReader, IMatchingStore
         GeoPoint pickup, string vehicleType, DateTime locationUpdatedAfter, double maxDistanceMeters,
         int maxCandidates, DateTime now, IReadOnlyCollection<string> excludedDriverIds, CancellationToken ct)
     {
-        await Drivers.UpdateManyAsync(
-            Builders<DriverAvailability>.Filter.And(
-                Builders<DriverAvailability>.Filter.Eq(x => x.Status, "Reserved"),
-                Builders<DriverAvailability>.Filter.Lte(x => x.ReservedUntil, now)),
-            Builders<DriverAvailability>.Update.Set(x => x.Status, "Available")
-                .Set(x => x.CurrentTripId, null).Set(x => x.CurrentProposalId, null)
-                .Set(x => x.ReservedUntil, null).Set(x => x.UpdatedAt, now),
-            cancellationToken: ct);
-
+        // Trip owns expiry. Do not unlock a reservation based on a local clock:
+        // a confirmation or result can be delayed in RabbitMQ.
         var filter = new BsonDocument
         {
             { "status", "Available" },
@@ -103,13 +103,13 @@ public sealed class MatchingDatabase : IDriverProfileReader, IMatchingStore
 
     public async Task<DriverAvailability?> FindActiveReservationAsync(string proposalId, DateTime now, CancellationToken ct) =>
         await Drivers.Find(x => x.CurrentProposalId == proposalId &&
-            (x.Status == "Busy" || (x.Status == "Reserved" && x.ReservedUntil > now)))
+            (x.Status == "Busy" || x.Status == "Reserved"))
             .SingleOrDefaultAsync(ct);
 
     public async Task<DriverAvailability?> FindActiveAssignmentForTripAsync(
         string tripId, DateTime now, CancellationToken ct) =>
         await Drivers.Find(x => x.CurrentTripId == tripId &&
-            (x.Status == "Busy" || (x.Status == "Reserved" && x.ReservedUntil > now)))
+            (x.Status == "Busy" || x.Status == "Reserved"))
             .SingleOrDefaultAsync(ct);
 
     public async Task<bool> TryReserveDriverAsync(
@@ -147,8 +147,7 @@ public sealed class MatchingDatabase : IDriverProfileReader, IMatchingStore
             Builders<DriverAvailability>.Filter.Eq(x => x.Id, driverId),
             Builders<DriverAvailability>.Filter.Eq(x => x.Status, "Reserved"),
             Builders<DriverAvailability>.Filter.Eq(x => x.CurrentTripId, tripId),
-            Builders<DriverAvailability>.Filter.Eq(x => x.CurrentProposalId, proposalId),
-            Builders<DriverAvailability>.Filter.Gt(x => x.ReservedUntil, now));
+            Builders<DriverAvailability>.Filter.Eq(x => x.CurrentProposalId, proposalId));
         var update = Builders<DriverAvailability>.Update
             .Set(x => x.Status, "Busy")
             .Set(x => x.ReservedUntil, null)
@@ -164,10 +163,9 @@ public sealed class MatchingDatabase : IDriverProfileReader, IMatchingStore
     {
         var filter = Builders<DriverAvailability>.Filter.And(
             Builders<DriverAvailability>.Filter.Eq(x => x.Id, driverId),
-            Builders<DriverAvailability>.Filter.Eq(x => x.Status, "Reserved"),
+            Builders<DriverAvailability>.Filter.In(x => x.Status, ["Reserved", "Busy"]),
             Builders<DriverAvailability>.Filter.Eq(x => x.CurrentTripId, tripId),
-            Builders<DriverAvailability>.Filter.Eq(x => x.CurrentProposalId, proposalId),
-            Builders<DriverAvailability>.Filter.Gt(x => x.ReservedUntil, now));
+            Builders<DriverAvailability>.Filter.Eq(x => x.CurrentProposalId, proposalId));
         var update = Builders<DriverAvailability>.Update
             .Set(x => x.Status, "Available")
             .Set(x => x.CurrentTripId, null)
@@ -197,6 +195,8 @@ public sealed class MatchingDatabase : IDriverProfileReader, IMatchingStore
 
     public async Task InitializeAsync(bool seed, CancellationToken ct = default)
     {
+        await Database.GetCollection<MatchingJob>("matching_jobs").Indexes.CreateOneAsync(new CreateIndexModel<MatchingJob>(
+            Builders<MatchingJob>.IndexKeys.Ascending(x => x.WorkPending).Ascending(x => x.NextAttemptAt).Ascending(x => x.LeaseUntil)), cancellationToken: ct);
         await Profiles.Indexes.CreateOneAsync(new CreateIndexModel<DriverProfile>(
             Builders<DriverProfile>.IndexKeys.Ascending(x => x.PlateNumber), new CreateIndexOptions { Unique = true }), cancellationToken: ct);
         await Drivers.Indexes.CreateOneAsync(new CreateIndexModel<DriverAvailability>(

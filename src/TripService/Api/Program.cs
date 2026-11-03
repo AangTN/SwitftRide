@@ -6,7 +6,12 @@ using SwiftRide.Trip.Infrastructure;
 using SwiftRide.ServiceDefaults;
 
 var builder = WebApplication.CreateBuilder(args);
-builder.Services.AddServiceDefaults(builder.Configuration, builder.Environment.IsDevelopment(), configureBus: x => x.AddConsumer<PaymentResultConsumer>(c => c.UseMessageRetry(r => r.Interval(3, TimeSpan.FromMilliseconds(200)))));
+builder.Services.AddServiceDefaults(builder.Configuration, builder.Environment.IsDevelopment(), configureBus: x =>
+{
+    x.AddConsumer<PaymentResultConsumer>(c => c.UseMessageRetry(r => r.Interval(3, TimeSpan.FromMilliseconds(200))));
+    x.AddConsumer<TripMatchingResultConsumer>(c => c.UseMessageRetry(r => r.Interval(3, TimeSpan.FromMilliseconds(200))));
+    x.AddConsumer<DriverGpsUpdatedConsumer>();
+});
 builder.Services.AddDbContext<TripDbContext>(o => o.UseSqlServer(builder.Configuration.GetConnectionString("TripDb")
     ?? throw new InvalidOperationException("ConnectionStrings:TripDb is required.")));
 builder.Services.AddSingleton(TimeProvider.System);
@@ -27,6 +32,7 @@ if (builder.Configuration.GetValue("RabbitMq:Enabled", true))
     builder.Services.AddHostedService<TripOutboxWorker>();
 }
 builder.Services.AddScoped<TripPaymentResultHandler>();
+builder.Services.AddScoped<TripMatchingResultHandler>();
 builder.Services.AddScoped<TripExceptionFilter>();
 builder.Services.AddHostedService<ProposalExpiryWorker>();
 builder.Services.AddHealthChecks().AddCheck<DatabaseHealthCheck>("Trip-db");

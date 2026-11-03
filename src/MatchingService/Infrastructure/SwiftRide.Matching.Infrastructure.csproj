@@ -1,5 +1,6 @@
 <Project Sdk="Microsoft.NET.Sdk">
   <ItemGroup>
+    <ProjectReference Include="../../Contracts/SwiftRide.Contracts.csproj" />
     <ProjectReference Include="../Domain/SwiftRide.Matching.Domain.csproj" />
     <ProjectReference Include="../Application/SwiftRide.Matching.Application.csproj" />
     <ProjectReference Include="../../ServiceDefaults/SwiftRide.ServiceDefaults.csproj" />

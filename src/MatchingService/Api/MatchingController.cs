@@ -1,4 +1,6 @@
 using System.Security.Claims;
+using MassTransit;
+using SwiftRide.Contracts.Trips;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Mvc.Filters;
@@ -9,7 +11,7 @@ namespace SwiftRide.Matching.Api;
 [ApiController, Route("api/matching")]
 [ResponseCache(NoStore = true, Location = ResponseCacheLocation.None)]
 [TypeFilter(typeof(MatchingExceptionFilter))]
-public sealed class MatchingController(MatchingCoordinator coordinator) : ControllerBase
+public sealed class MatchingController(MatchingCoordinator coordinator, IMatchingStore store) : ControllerBase
 {
     [HttpPut("drivers/me/availability"), Authorize(Roles = "Driver")]
     public async Task<IActionResult> UpdateAvailability(DriverLocationUpdate request, CancellationToken ct)
@@ -38,77 +40,19 @@ public sealed class MatchingController(MatchingCoordinator coordinator) : Contro
             });
     }
 
-    [HttpPost("proposals/assign"), Authorize(Roles = "Rider")]
-    public async Task<IActionResult> FindAndReserveNearest(DriverMatchRequest request, CancellationToken ct)
+    [HttpPut("drivers/me/location"), Authorize(Roles = "Driver")]
+    public async Task<IActionResult> UpdateGps(DriverGpsRequest request, [FromServices] IPublishEndpoint bus, CancellationToken ct)
     {
-        if (request.TripId == Guid.Empty || request.ProposalId == Guid.Empty)
-            return ValidationProblem(new ValidationProblemDetails(new Dictionary<string, string[]>
-            {
-                ["ids"] = ["TripId and ProposalId must be non-empty UUIDs."]
-            }));
-        var match = await coordinator.FindAndReserveNearestAsync(request, ct);
-        return match is null
-            ? NotFound(new ProblemDetails
-            {
-                Status = StatusCodes.Status404NotFound,
-                Title = "no_driver_available",
-                Detail = "No eligible nearby driver is currently available."
-            })
-            : Ok(match);
-    }
-
-    [HttpPost("reservations/{proposalId:guid}/accept"), Authorize(Roles = "Driver")]
-    public async Task<IActionResult> ConfirmReservation(Guid proposalId, [FromQuery] Guid tripId, CancellationToken ct)
-    {
-        if (proposalId == Guid.Empty || tripId == Guid.Empty)
-            return BadRequest(new ProblemDetails
-            {
-                Status = StatusCodes.Status400BadRequest,
-                Title = "invalid_reservation",
-                Detail = "TripId and ProposalId must be non-empty UUIDs."
-            });
-        var confirmed = await coordinator.ConfirmReservationAsync(UserId(), tripId, proposalId, ct);
-        return confirmed
-            ? NoContent()
-            : Conflict(new ProblemDetails
-            {
-                Status = StatusCodes.Status409Conflict,
-                Title = "reservation_not_active",
-                Detail = "The reservation is expired, belongs to another driver, or no longer matches this trip."
-            });
-    }
-
-    [HttpPost("reservations/{proposalId:guid}/decline"), Authorize(Roles = "Driver")]
-    public async Task<IActionResult> DeclineReservation(Guid proposalId, [FromQuery] Guid tripId, CancellationToken ct)
-    {
-        if (proposalId == Guid.Empty || tripId == Guid.Empty)
-            return BadRequest(new ProblemDetails
-            {
-                Status = StatusCodes.Status400BadRequest,
-                Title = "invalid_reservation",
-                Detail = "TripId and ProposalId must be non-empty UUIDs."
-            });
-        var released = await coordinator.ReleaseReservationAsync(UserId(), tripId, proposalId, ct);
-        return released
-            ? NoContent()
-            : Conflict(new ProblemDetails
-            {
-                Status = StatusCodes.Status409Conflict,
-                Title = "reservation_not_active",
-                Detail = "The reservation is expired, belongs to another driver, or no longer matches this trip."
-            });
-    }
-
-    [HttpPost("quotes"), Authorize(Roles = "Rider")]
-    public async Task<IActionResult> CreateFareQuote(FareQuoteRequest request, CancellationToken ct)
-    {
-        if (request.TripId == Guid.Empty || request.ProposalId == Guid.Empty)
-            return ValidationProblem(new ValidationProblemDetails(new Dictionary<string, string[]>
-            {
-                ["ids"] = ["TripId and ProposalId must be non-empty UUIDs."]
-            }));
-        var quote = await coordinator.CreateFareQuoteAsync(request, ct);
-        return Ok(quote);
+        MatchingCoordinator.ValidateCoordinate(request.Latitude, request.Longitude);
+        var now = DateTime.UtcNow;
+        var driver = await store.UpdateGpsAsync(UserId(), request, now, ct);
+        if (driver is null) return NotFound();
+        if (driver.Status is ("Reserved" or "Busy") &&
+            Guid.TryParse(driver.CurrentTripId, out var tripId) &&
+            Guid.TryParse(driver.CurrentProposalId, out var proposalId))
+            await bus.Publish(new DriverGpsUpdated(tripId, proposalId, Guid.Parse(driver.Id),
+                request.Latitude, request.Longitude, new DateTimeOffset(now)), ct);
+        return NoContent();
     }
 
     [HttpGet("places/geocode"), Authorize(Roles = "Rider,Driver")]
@@ -167,7 +111,7 @@ public sealed class MatchingController(MatchingCoordinator coordinator) : Contro
         : throw new MatchingFailureException(401, "invalid_identity", "A valid user identity is required.");
 }
 
-public sealed class MatchingExceptionFilter : IExceptionFilter
+public sealed class MatchingExceptionFilter : Microsoft.AspNetCore.Mvc.Filters.IExceptionFilter
 {
     public void OnException(ExceptionContext context)
     {

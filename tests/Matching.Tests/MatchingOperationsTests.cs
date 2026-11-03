@@ -148,6 +148,8 @@ public sealed class MatchingOperationsTests
 
     private sealed class FakeMatchingStore(IReadOnlyList<DriverAvailability> candidates) : IMatchingStore
     {
+        public Task<DriverAvailability?> UpdateGpsAsync(string driverId, DriverGpsRequest gps, DateTime now, CancellationToken ct) =>
+            Task.FromResult<DriverAvailability?>(null);
         public string? FailedDriverId { get; init; }
         public int ReservationAttempts { get; private set; }
         public IReadOnlyCollection<string> ExcludedDriverIds { get; private set; } = [];

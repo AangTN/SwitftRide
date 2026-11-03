@@ -3,9 +3,23 @@ using MongoDB.Driver;
 using SwiftRide.Matching.Infrastructure;
 using SwiftRide.Matching.Application;
 using SwiftRide.ServiceDefaults;
+using MassTransit;
+using SwiftRide.Matching.Api;
 
 var builder = WebApplication.CreateBuilder(args);
-builder.Services.AddServiceDefaults(builder.Configuration, builder.Environment.IsDevelopment());
+builder.Services.AddServiceDefaults(builder.Configuration, builder.Environment.IsDevelopment(), configureBus: x =>
+{
+    x.AddConsumer<TripMatchingRequestedConsumer>(c => c.UseMessageRetry(r => r.Interval(3, TimeSpan.FromMilliseconds(200))));
+    x.AddConsumer<DriverReservationConfirmedConsumer>(c => c.UseMessageRetry(r => r.Interval(3, TimeSpan.FromMilliseconds(200))));
+    x.AddConsumer<DriverReservationReleaseConsumer>(c => c.UseMessageRetry(r => r.Interval(3, TimeSpan.FromMilliseconds(200))));
+});
+builder.Services.AddSingleton<MatchingJobStore>();
+builder.Services.Configure<MassTransitHostOptions>(x => x.WaitUntilStarted = false);
+if (builder.Configuration.GetValue("RabbitMq:Enabled", true))
+{
+    builder.Services.AddScoped<MatchingJobDispatcher>();
+    builder.Services.AddHostedService<MatchingJobWorker>();
+}
 if (builder.Configuration.GetValue("Seed:Enabled", false) && !builder.Environment.IsDevelopment())
     throw new InvalidOperationException("Development seed cannot be enabled outside Development.");
 builder.Services.AddSingleton<IMongoClient>(_ => new MongoClient(builder.Configuration.GetConnectionString("MatchingDb")

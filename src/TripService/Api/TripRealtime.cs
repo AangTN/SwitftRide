@@ -42,8 +42,7 @@ public sealed class TripHub(TripDbContext db) : Hub
     public async Task SubscribeTrip(Guid tripId)
     {
         if (!Guid.TryParse(Context.User?.FindFirst("sub")?.Value, out var userId)) throw new HubException("invalid_subject");
-        var permitted = await db.Trips.AnyAsync(x => x.Id == tripId && (x.RiderId == userId || x.DriverId == userId ||
-            x.Proposals.Any(p => p.DriverId == userId && p.Status == ProposalStatus.AwaitingDriverResponse)), Context.ConnectionAborted);
+        var permitted = await db.Trips.AnyAsync(x => x.Id == tripId && (x.RiderId == userId || x.DriverId == userId), Context.ConnectionAborted);
         if (!permitted) throw new HubException("trip_forbidden");
         await Groups.AddToGroupAsync(Context.ConnectionId, TripGroup(tripId), Context.ConnectionAborted);
     }

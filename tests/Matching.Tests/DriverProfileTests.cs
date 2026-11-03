@@ -44,6 +44,13 @@ public sealed class DriverProfileTests : IAsyncLifetime
     }
     [Fact] public async Task Anonymous_is_rejected() => Assert.Equal(HttpStatusCode.Unauthorized, (await Get()).StatusCode);
     [Fact] public async Task Rider_is_forbidden() => Assert.Equal(HttpStatusCode.Forbidden, (await Get("Rider")).StatusCode);
+    [Theory]
+    [InlineData("/api/matching/proposals/assign")]
+    [InlineData("/api/matching/quotes")]
+    [InlineData("/api/matching/reservations/11111111-1111-1111-1111-111111111111/accept")]
+    [InlineData("/api/matching/reservations/11111111-1111-1111-1111-111111111111/decline")]
+    public async Task Direct_reservation_and_quote_APIs_are_removed(string path) =>
+        Assert.Equal(HttpStatusCode.NotFound, (await client.PostAsync(path, null)).StatusCode);
     [Fact] public async Task Missing_driver_profile_returns_404() => Assert.Equal(HttpStatusCode.NotFound, (await Get("Driver", Guid.NewGuid().ToString())).StatusCode);
     [Fact] public async Task Profile_is_selected_from_token_and_uses_its_own_legal_name()
     {

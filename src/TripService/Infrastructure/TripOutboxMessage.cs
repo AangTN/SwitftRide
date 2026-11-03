@@ -2,7 +2,7 @@ using System.Text.Json;
 
 namespace SwiftRide.Trip.Infrastructure;
 
-public enum TripMessageKind { FindDriver, ReleaseDriver, RequestPayment }
+public enum TripMessageKind { FindDriver, ReleaseDriver, RequestPayment, ConfirmDriver }
 public enum TripMessageStatus { Pending, Sent, Failed, Cancelled }
 
 public sealed class TripOutboxMessage

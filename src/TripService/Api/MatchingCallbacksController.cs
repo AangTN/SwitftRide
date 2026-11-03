@@ -14,19 +14,53 @@ public sealed class MatchingCallbacksController(TripDbContext db, ITripRealtimeP
 {
     [HttpPost("{tripId:guid}/proposals")]
     public async Task<IActionResult> Offer(Guid tripId, TripProposalCandidate candidate, CancellationToken ct)
+        => await new TripMatchingResultHandler(db, realtime, matching, clock, workflow)
+            .ApplyAsync(new TripMatchingResult(tripId, candidate.ProposalId, candidate), ct)
+            ? Accepted() : Conflict(new { code = "proposal_closed" });
+}
+
+public sealed class TripMatchingResultHandler(TripDbContext db, ITripRealtimePublisher realtime, ITripMatchingNotifier matching,
+    TimeProvider clock, IOptions<TripWorkflowOptions> workflow)
+{
+    public async Task<bool> ApplyAsync(TripMatchingResult result, CancellationToken ct)
     {
-        var trip = await db.Trips.Include(x => x.Proposals).Include(x => x.History).SingleOrDefaultAsync(x => x.Id == tripId, ct)
+        try { return await ApplyCoreAsync(result, ct); }
+        catch (DbUpdateConcurrencyException)
+        {
+            db.ChangeTracker.Clear(); // A concurrent cancel/expiry won; retry against its committed state.
+            throw;
+        }
+    }
+
+    private async Task<bool> ApplyCoreAsync(TripMatchingResult result, CancellationToken ct)
+    {
+        var trip = await db.Trips.Include(x => x.Proposals).Include(x => x.History).SingleOrDefaultAsync(x => x.Id == result.TripId, ct)
             ?? throw new SwiftRide.ServiceDefaults.ApiFailure(404, "trip_not_found", "Trip was not found.");
-        var proposal = trip.Proposals.SingleOrDefault(x => x.Id == candidate.ProposalId)
+        var candidate = result.Candidate;
+        var proposal = trip.Proposals.SingleOrDefault(x => x.Id == result.ProposalId)
             ?? throw new SwiftRide.ServiceDefaults.ApiFailure(409, "proposal_not_found", "Matching must supply a proposal id created by Trip.");
         if (trip.Status != TripStatus.Matching || proposal.Status != ProposalStatus.Searching)
         {
-            if (proposal.DriverId == candidate.DriverId && proposal.Status is ProposalStatus.AwaitingRiderApproval or ProposalStatus.AwaitingDriverResponse or ProposalStatus.DriverAccepted)
-                return Accepted(); // Duplicate callback for a still-active reservation.
+            if (candidate is null) return true;
+            if (proposal.DriverId == candidate.DriverId &&
+                proposal.Status is (ProposalStatus.AwaitingRiderApproval or ProposalStatus.AwaitingDriverResponse or ProposalStatus.DriverAccepted) &&
+                trip.Status is not (TripStatus.Cancelled or TripStatus.Failed or TripStatus.PaymentPending or TripStatus.Paid))
+                return true; // Duplicate delivery must not restart the rider's countdown.
             await matching.ReleaseAsync(new TripProposal { Id = proposal.Id, TripId = trip.Id, DriverId = candidate.DriverId }, "late_matching_result", ct);
             await db.SaveChangesAsync(ct);
-            return Conflict(new { code = "proposal_closed", detail = "Proposal is closed; release of the late reservation has been queued." });
+            return false;
         }
+        if (candidate is null)
+        {
+            proposal.Status = ProposalStatus.NoDriverFound;
+            proposal.ResolvedAt = clock.GetUtcNow();
+            TripStateMachine.Move(trip, TripStatus.Failed, null, clock.GetUtcNow(), result.FailureCode ?? "no_driver_available");
+            await db.SaveChangesAsync(ct);
+            await realtime.PublishTripChangedAsync(trip, ct);
+            return true;
+        }
+        if (candidate.ProposalId != result.ProposalId || candidate.DriverId == Guid.Empty || candidate.Amount < 0 || candidate.Currency != "VND")
+            throw new SwiftRide.ServiceDefaults.ApiFailure(400, "invalid_matching_result", "Invalid candidate result.");
         if (trip.Proposals.Any(x => x.DriverId == candidate.DriverId)) throw new SwiftRide.ServiceDefaults.ApiFailure(409, "driver_already_considered", "This driver was already considered for this trip.");
         if (trip.Proposals.Count(x => x.DriverId is not null) >= workflow.Value.MaxDriverAttempts)
             throw new SwiftRide.ServiceDefaults.ApiFailure(409, "driver_attempt_limit_reached", "The trip has exhausted its configured driver attempts.");
@@ -36,6 +70,6 @@ public sealed class MatchingCallbacksController(TripDbContext db, ITripRealtimeP
         proposal.Status = ProposalStatus.AwaitingRiderApproval; proposal.RiderApprovalDeadline = now.AddSeconds(workflow.Value.RiderApprovalSeconds);
         TripStateMachine.Move(trip, TripStatus.AwaitingRiderApproval, null, now, "matching_candidate_offered");
         await db.SaveChangesAsync(ct); await realtime.PublishTripChangedAsync(trip, ct);
-        return Accepted();
+        return true;
     }
 }
