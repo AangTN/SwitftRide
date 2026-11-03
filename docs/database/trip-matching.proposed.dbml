@@ -165,28 +165,51 @@ Table MatchingDB.driver_availability {
   locationUpdatedAt datetime [null, note: 'UTC; stale locations are excluded from matching.']
   currentTripId varchar(36) [null, note: 'Logical TripDB.trips.id; set while Reserved or Busy. No physical FK.']
   currentProposalId varchar(36) [null, note: 'Logical TripDB.trip_proposals.id; set while Reserved. No physical FK.']
-  reservedUntil datetime [null, note: 'UTC hold deadline, not a document TTL. Extend when rider accepts.']
+  reservedUntil datetime [null, note: 'UTC hold deadline, not a document TTL. Current matching hold is 90 seconds.']
   updatedAt datetime [not null]
 
   indexes {
     (vehicleType, status, locationUpdatedAt)
     (status, reservedUntil)
-    currentTripId
-    currentProposalId
+    currentTripId [unique, note: 'Partial unique index for non-null trip IDs; one active driver assignment per trip.']
+    currentProposalId [unique, note: 'Partial unique index for non-null proposal IDs; one active driver assignment per proposal.']
   }
 
   Note: '''
     MongoDB collection, represented as a table ONLY for drawing.
     _id logically matches driver_profiles._id; MongoDB does not enforce a FK.
     Available -> Reserved uses one atomic conditional update.
-    Check status, trip, proposal and unexpired hold atomically when extending
-    or confirming. Expiry worker must conditionally release the same expired hold.
+    Check status, trip, proposal and unexpired hold atomically when confirming
+    or declining. Matching releases expired holds conditionally during a later search.
     Reserved requires currentTripId, currentProposalId and reservedUntil.
-    Busy keeps currentTripId; clear proposal/hold fields after acceptance.
+    Busy keeps currentTripId and currentProposalId for idempotent retries;
+    reservedUntil is cleared after acceptance.
     Offline/Available clear trip/proposal/hold fields.
     Never TTL-delete this document: a timeout clears the hold, not the driver.
-    Release back to Available only when the driver is still online/eligible.
+    A driver decline releases the active hold back to Available. A confirmed
+    driver remains Busy until Trip integrates trip completion.
   '''
+}
+
+Table MatchingDB.fare_quotes {
+  _id varchar(36) [pk, not null]
+  tripId varchar(36) [not null, note: 'Logical TripDB.trips.id; no cross-database FK.']
+  proposalId varchar(36) [not null, unique, note: 'One immutable quote per proposal; a replacement proposal receives a new quote.']
+  vehicleType varchar(30) [not null]
+  distanceMeters double [not null, note: 'Goong route distance.']
+  estimatedDurationSeconds int [not null, note: 'Goong route duration.']
+  pricingSnapshot json [not null, note: 'Rates/factors captured when calculated.']
+  totalAmount decimal(18,2) [not null]
+  currency varchar(3) [not null, default: 'VND']
+  expiresAt datetime [not null, note: 'UTC; expired quotes are retained.']
+  createdAt datetime [not null, note: 'UTC.']
+
+  indexes {
+    tripId
+    expiresAt
+  }
+
+  Note: 'MongoDB collection. Pricing and route snapshots are immutable for a proposal; no physical FK to TripDB.'
 }
 
 TableGroup TripDB_SQL_Server {
@@ -198,4 +221,5 @@ TableGroup TripDB_SQL_Server {
 TableGroup MatchingDB_MongoDB {
   MatchingDB.driver_profiles
   MatchingDB.driver_availability
+  MatchingDB.fare_quotes
 }

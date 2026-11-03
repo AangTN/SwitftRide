@@ -10,7 +10,7 @@ public sealed class ProposalExpiryWorker(IServiceScopeFactory scopes, TimeProvid
 {
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
-        using var timer = new PeriodicTimer(TimeSpan.FromSeconds(5));
+        using var timer = new PeriodicTimer(TimeSpan.FromSeconds(1));
         while (await timer.WaitForNextTickAsync(stoppingToken))
         {
             try { await ExpireAsync(stoppingToken); }
@@ -18,7 +18,7 @@ public sealed class ProposalExpiryWorker(IServiceScopeFactory scopes, TimeProvid
         }
     }
 
-    private async Task ExpireAsync(CancellationToken ct)
+    public async Task ExpireAsync(CancellationToken ct)
     {
         await using var scope = scopes.CreateAsyncScope();
         var db = scope.ServiceProvider.GetRequiredService<TripDbContext>(); var realtime = scope.ServiceProvider.GetRequiredService<ITripRealtimePublisher>(); var matching = scope.ServiceProvider.GetRequiredService<ITripMatchingNotifier>(); var now = clock.GetUtcNow();

@@ -10,7 +10,8 @@ Backend .NET 10 gồm Auth, Trip, Matching & Pricing, Payment và API Gateway YA
 - EF migrations cho Auth/PostgreSQL, Trip/SQL Server, Payment/PostgreSQL; collection/index và seed trạng thái Driver cho Matching/MongoDB.
 - RabbitMQ/MassTransit, health/readiness, correlation ID, lỗi Problem Details, OpenAPI/Swagger Development, Docker Compose.
 - Có hai app Flutter khách hàng/tài xế: đăng nhập OTP, đăng ký khách hàng, hồ sơ và đăng xuất; chạy thử web trên PC hoặc Android. Xem [hướng dẫn app](apps/mobile/DEVELOPMENT.md).
-- Chưa có API nghiệp vụ chuyến đi/matching/thanh toán, cổng SMS, upload ảnh, ví, hoàn tiền, Saga hoặc Outbox. Schema sổ cái có sẵn; chưa có nghiệp vụ ghi sổ hay tính phí nền tảng.
+- Matching & Pricing có API cập nhật vị trí/trạng thái tài xế, tìm và khóa tài xế gần nhất, chấp nhận/từ chối khóa, tra địa chỉ và tạo báo giá theo tuyến Goong. Trip chưa tích hợp vòng đời proposal với Matching; Auth, Trip và Payment vẫn do các nhóm tương ứng sở hữu.
+- Chưa có API nghiệp vụ chuyến đi/thanh toán, cổng SMS, upload ảnh, ví, hoàn tiền, Saga hoặc Outbox. Schema sổ cái có sẵn; chưa có nghiệp vụ ghi sổ hay tính phí nền tảng.
 
 ## Chạy hai app trên PC
 
@@ -21,6 +22,14 @@ pwsh -File scripts/Start-Mobile.ps1
 ```
 
 Mở khách hàng tại `http://localhost:5173`, tài xế tại `http://localhost:5174`. Tài khoản demo lần lượt `0900000001` và `0900000002`; OTP Development `123456` (chưa gửi SMS thật). Chạy lại với `-SkipBuild` nếu chưa sửa source. Chi tiết chạy Android qua USB và xuất hai APK ở [hướng dẫn app](apps/mobile/DEVELOPMENT.md).
+
+## Bản demo công khai
+
+- Khách hàng: https://13.214.93.224/
+- Tài xế: https://13.214.93.224/driver/
+- OTP demo: `123456`
+
+Các URL trên là bản demo dùng OTP giả lập; mã OTP cố định và không xác minh quyền sở hữu số điện thoại.
 
 ## Yêu cầu
 
@@ -52,9 +61,27 @@ Compose này dành cho **Development**, tự migrate và seed khi khởi động
 | Payment Swagger | http://localhost:5104/swagger |
 | RabbitMQ Management | http://localhost:15672 |
 
-Swagger của các service khung chưa có API nghiệp vụ. RabbitMQ đăng nhập bằng user `swiftride` và mật khẩu trong `.env`.
+Swagger Matching hiển thị các API nghiệp vụ bên dưới; các API Trip/Payment chưa được triển khai. RabbitMQ đăng nhập bằng user `swiftride` và mật khẩu trong `.env`.
 
 `GET /health/live` kiểm tra process; `GET /health/ready` kiểm tra database và broker tại các service. Gateway readiness kiểm tra readiness cả bốn backend.
+
+## Matching & Pricing API
+
+Các API dưới đây đi qua Gateway (`http://localhost:5000`) và yêu cầu JWT:
+
+| API | Quyền | Hành vi |
+|---|---|---|
+| `PUT /api/matching/drivers/me/availability` | Driver | Bật/tắt nhận chuyến khi chưa bận; bật cần tọa độ hiện tại |
+| `PUT /api/matching/drivers/me/location` | Driver | Cập nhật GPS, cả lúc đang được giữ hoặc chạy chuyến; không đổi trạng thái nhận chuyến |
+| `GET /api/matching/places/geocode?address=...` | Rider, Driver | Tra địa chỉ thành tọa độ bằng Goong |
+| `GET /api/matching/places/search?input=...` | Rider, Driver | Gợi ý địa điểm bằng Goong Places Autocomplete |
+| `GET /api/matching/places/reverse?latitude=...&longitude=...` | Rider, Driver | Tra địa chỉ từ tọa độ bằng Goong |
+
+Khách tạo chuyến qua Trip với điểm đón/đến và `vehicleType` (`Motorbike`, `Car4Seats`, `Car7Seats`). Trip gửi lệnh tìm tài xế/định giá qua RabbitMQ; app không gọi trực tiếp Matching để giữ tài xế hoặc tạo giá chính thức. Matching tìm trong 10 km, loại GPS quá 120 giây. Khách có 90 giây xác nhận cả tài xế và giá, sau đó tài xế có 30 giây trả lời. Trip quyết định hết hạn và gửi lệnh giải phóng qua Outbox. Giá áp dụng `p = ((cd*d + ct*t)*s + cm)*eta*(1+T)`; dùng decimal, làm tròn VND lên tại nửa đồng và lưu snapshot theo proposal.
+
+Đặt `GOONG_API_KEY` trong `.env` để bật tra địa chỉ và định tuyến. Compose chỉ chuyển khóa cho Matching backend; không đưa khóa này vào Flutter. Khi chưa cấu hình, API Goong trả lỗi `503 goong_not_configured` thay vì ước lượng tuyến/giá giả. Có thể chỉnh bán kính tìm kiếm, thời hạn vị trí/khóa/báo giá và đơn giá trong cấu hình `Matching`/`Pricing` của Matching.
+
+Matching chỉ sở hữu hồ sơ, vị trí/trạng thái tài xế, khóa, báo giá và công việc tích hợp MongoDB; không đọc/ghi trực tiếp TripDB. Trip có API xác nhận/nhận/từ chối chuyến, phát lệnh xác nhận/giải phóng tài xế qua Outbox. Matching chuyển GPS cho Trip để báo đúng khách qua SignalR. Chi tiết API, retry, migration và phần frontend cần nối: [docs/matching-integration.md](docs/matching-integration.md).
 
 ## Chạy service bằng .NET trên máy
 
