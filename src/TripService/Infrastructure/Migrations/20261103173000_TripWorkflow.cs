@@ -1,10 +1,12 @@
 using Microsoft.EntityFrameworkCore.Migrations;
+using Microsoft.EntityFrameworkCore.Infrastructure;
 
 #nullable disable
 
 namespace SwiftRide.Trip.Infrastructure.Migrations;
 
 [Migration("20261103173000_TripWorkflow")]
+[DbContext(typeof(TripDbContext))]
 public partial class TripWorkflow : Migration
 {
     protected override void Up(MigrationBuilder migrationBuilder)

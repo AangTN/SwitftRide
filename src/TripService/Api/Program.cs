@@ -13,10 +13,16 @@ builder.Services.Configure<TripWorkflowOptions>(builder.Configuration.GetSection
 builder.Services.AddSignalR();
 builder.Services.AddSingleton<Microsoft.AspNetCore.SignalR.IUserIdProvider, SubjectUserIdProvider>();
 builder.Services.AddScoped<ITripRealtimePublisher, TripRealtimePublisher>();
-if (builder.Configuration.GetValue("RabbitMq:Enabled", true)) builder.Services.AddScoped<ITripMatchingNotifier, TripMatchingNotifier>();
-else builder.Services.AddScoped<ITripMatchingNotifier, NoopTripMatchingNotifier>();
-if (builder.Configuration.GetValue("RabbitMq:Enabled", true)) builder.Services.AddScoped<ITripPaymentNotifier, TripPaymentNotifier>();
-else builder.Services.AddScoped<ITripPaymentNotifier, NoopTripPaymentNotifier>();
+builder.Services.AddScoped<ITripMatchingNotifier, TripMatchingNotifier>();
+builder.Services.AddScoped<ITripPaymentNotifier, TripPaymentNotifier>();
+builder.Services.AddOptions<TripOutboxOptions>().Bind(builder.Configuration.GetSection("TripOutbox"))
+    .Validate(x => x.RetryCount >= 0 && x.RetryCount <= 100 && x.RetryDelaySeconds > 0 && x.PublishTimeoutSeconds > 0,
+        "Outbox retry count must be 0–100 and delay/timeout must be positive.").ValidateOnStart();
+// Trip can persist requests while the broker reconnects in the background.
+builder.Services.Configure<MassTransit.MassTransitHostOptions>(x => x.WaitUntilStarted = false);
+builder.Services.AddScoped<TripOutboxDispatcher>();
+if (builder.Configuration.GetValue("RabbitMq:Enabled", true))
+    builder.Services.AddHostedService<TripOutboxWorker>();
 builder.Services.AddScoped<TripExceptionFilter>();
 builder.Services.AddHostedService<ProposalExpiryWorker>();
 builder.Services.AddHealthChecks().AddCheck<DatabaseHealthCheck>("Trip-db");

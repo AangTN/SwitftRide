@@ -9,8 +9,19 @@ public sealed class TripDbContext(DbContextOptions<TripDbContext> options) : DbC
     public DbSet<TripEntity> Trips => Set<TripEntity>();
     public DbSet<TripStatusHistory> TripStatusHistory => Set<TripStatusHistory>();
     public DbSet<TripProposal> TripProposals => Set<TripProposal>();
+    public DbSet<TripOutboxMessage> OutboxMessages => Set<TripOutboxMessage>();
     protected override void OnModelCreating(ModelBuilder b)
     {
+        b.Entity<TripOutboxMessage>(e =>
+        {
+            e.ToTable("outbox_messages");
+            e.HasKey(x => x.Id);
+            e.Property(x => x.Kind).HasConversion<string>().HasMaxLength(30);
+            e.Property(x => x.Status).HasConversion<string>().HasMaxLength(30);
+            e.Property(x => x.LastError).HasMaxLength(200);
+            e.HasIndex(x => new { x.Status, x.NextAttemptAt });
+            e.HasIndex(x => x.TripId);
+        });
         b.Entity<TripEntity>(e =>
         {
             e.ToTable("trips", t => t.HasCheckConstraint("ck_trip_amount", "[agreed_amount] IS NULL OR [agreed_amount] >= 0"));
@@ -25,6 +36,7 @@ public sealed class TripDbContext(DbContextOptions<TripDbContext> options) : DbC
             e.Property(x => x.DriverNameSnapshot).HasMaxLength(150); e.Property(x => x.PlateNumberSnapshot).HasMaxLength(20);
             e.Property(x => x.VehicleNameSnapshot).HasMaxLength(150); e.Property(x => x.VehicleImageKeySnapshot).HasMaxLength(500);
             e.Property(x => x.PaymentId).HasMaxLength(100); e.Property(x => x.PaymentStatus).HasMaxLength(30);
+            e.Property(x => x.FailureReason).HasMaxLength(100);
             e.HasIndex(x => new { x.RiderId, x.CreatedAt }); e.HasIndex(x => new { x.DriverId, x.Status });
             e.HasIndex(x => new { x.RiderId, x.IdempotencyKey }).IsUnique().HasFilter("[idempotency_key] <> ''");
             e.HasMany(x => x.History).WithOne().HasForeignKey(x => x.TripId).OnDelete(DeleteBehavior.Restrict);
@@ -33,6 +45,7 @@ public sealed class TripDbContext(DbContextOptions<TripDbContext> options) : DbC
         b.Entity<TripStatusHistory>(e =>
         {
             e.ToTable("trip_status_history"); e.HasKey(x => x.Id);
+            e.Property(x => x.Id).ValueGeneratedNever();
             e.Property(x => x.FromStatus).HasConversion<string>().HasMaxLength(30);
             e.Property(x => x.ToStatus).HasConversion<string>().HasMaxLength(30);
             e.HasIndex(x => new { x.TripId, x.CreatedAt });
@@ -40,6 +53,7 @@ public sealed class TripDbContext(DbContextOptions<TripDbContext> options) : DbC
         b.Entity<TripProposal>(e =>
         {
             e.ToTable("trip_proposals"); e.HasKey(x => x.Id);
+            e.Property(x => x.Id).ValueGeneratedNever();
             e.Property(x => x.Status).HasConversion<string>().HasMaxLength(30);
             e.Property(x => x.QuoteId).HasMaxLength(100); e.Property(x => x.Amount).HasPrecision(18, 2);
             e.Property(x => x.Currency).HasMaxLength(3); e.Property(x => x.DriverNameSnapshot).HasMaxLength(150);

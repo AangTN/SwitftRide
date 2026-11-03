@@ -45,8 +45,9 @@ public sealed class ProposalExpiryWorker(IServiceScopeFactory scopes, TimeProvid
             TripStateMachine.Move(trip, TripStatus.Cancelled, null, now, "rider_approval_timeout");
         }
         if (trips.Count == 0) return;
-        await db.SaveChangesAsync(ct);
         foreach (var release in releases) await matching.ReleaseAsync(release.Proposal, release.Reason, ct);
-        foreach (var trip in trips) { await matching.RequestOpenProposalsAsync(trip, ct); await realtime.PublishTripChangedAsync(trip, ct); }
+        foreach (var trip in trips) await matching.RequestOpenProposalsAsync(trip, ct);
+        await db.SaveChangesAsync(ct);
+        foreach (var trip in trips) await realtime.PublishTripChangedAsync(trip, ct);
     }
 }

@@ -1,8 +1,10 @@
 <Project Sdk="Microsoft.NET.Sdk">
   <ItemGroup><ProjectReference Include="../../src/TripService/Domain/SwiftRide.Trip.Domain.csproj" /></ItemGroup>
+  <ItemGroup><ProjectReference Include="../../src/TripService/Api/SwiftRide.Trip.Api.csproj" /></ItemGroup>
   <ItemGroup>
     <PackageReference Include="Microsoft.NET.Test.Sdk" />
     <PackageReference Include="xunit" />
     <PackageReference Include="xunit.runner.visualstudio" />
+    <PackageReference Include="Microsoft.EntityFrameworkCore.Sqlite" />
   </ItemGroup>
 </Project>

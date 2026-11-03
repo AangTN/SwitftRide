@@ -26,6 +26,7 @@ public sealed class Trip
     public string? VehicleImageKeySnapshot { get; set; }
     public string? PaymentId { get; set; }
     public string? PaymentStatus { get; set; }
+    public string? FailureReason { get; set; }
     public DateTimeOffset CreatedAt { get; set; }
     public DateTimeOffset UpdatedAt { get; set; }
     public DateTimeOffset? DriverAcceptedAt { get; set; }

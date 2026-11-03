@@ -30,6 +30,7 @@ public sealed class TripsController(TripDbContext db, ITripRealtimePublisher rea
         TripStateMachine.Move(trip, TripStatus.Matching, riderId, now, "matching_requested");
         trip.Proposals.Add(new TripProposal { TripId = trip.Id, CreatedAt = now, Status = ProposalStatus.Searching });
         db.Trips.Add(trip);
+        await matching.RequestOpenProposalsAsync(trip, ct);
         try { await db.SaveChangesAsync(ct); }
         catch (DbUpdateException)
         {
@@ -38,7 +39,6 @@ public sealed class TripsController(TripDbContext db, ITripRealtimePublisher rea
             if (duplicate is not null) return Ok(Snapshot(duplicate));
             throw;
         }
-        await matching.RequestOpenProposalsAsync(trip, ct);
         await realtime.PublishTripChangedAsync(trip, ct);
         return CreatedAtAction(nameof(Get), new { tripId = trip.Id }, Snapshot(trip));
     }
@@ -92,8 +92,8 @@ public sealed class TripsController(TripDbContext db, ITripRealtimePublisher rea
         TripStateMachine.Move(trip, TripStatus.DroppedOff, UserId(), now);
         trip.DroppedOffAt = now; trip.CompletedAt = now; trip.PaymentId = Guid.NewGuid().ToString("N"); trip.PaymentStatus = "Pending";
         TripStateMachine.Move(trip, TripStatus.PaymentPending, UserId(), now, "payment_requested");
-        await db.SaveChangesAsync(ct); await transaction.CommitAsync(ct);
         await payment.RequestAsync(trip, ct);
+        await db.SaveChangesAsync(ct); await transaction.CommitAsync(ct);
         await realtime.PublishTripChangedAsync(trip, ct); await realtime.PublishRideCompletedAsync(trip, ct);
         return Ok(Snapshot(trip));
     }
@@ -107,8 +107,8 @@ public sealed class TripsController(TripDbContext db, ITripRealtimePublisher rea
         var release = trip.Proposals.Where(x => x.Status is ProposalStatus.AwaitingDriverResponse or ProposalStatus.AwaitingRiderApproval).ToList();
         TripStateMachine.Move(trip, TripStatus.Cancelled, UserId(), now, "cancelled_by_user");
         foreach (var proposal in trip.Proposals.Where(x => x.Status is ProposalStatus.AwaitingDriverResponse or ProposalStatus.AwaitingRiderApproval or ProposalStatus.Searching)) { proposal.Status = ProposalStatus.Cancelled; proposal.ResolvedAt = now; }
-        await db.SaveChangesAsync(ct);
         foreach (var proposal in release) await matching.ReleaseAsync(proposal, "trip_cancelled", ct);
+        await db.SaveChangesAsync(ct);
         await realtime.PublishTripChangedAsync(trip, ct); return Ok(Snapshot(trip));
     }
 
@@ -124,8 +124,8 @@ public sealed class TripsController(TripDbContext db, ITripRealtimePublisher rea
         var now = clock.GetUtcNow(); proposal.Status = approve ? ProposalStatus.AwaitingDriverResponse : ProposalStatus.RiderRejected; proposal.ResolvedAt = now; proposal.RiderRespondedAt = now;
         if (approve) { proposal.DriverResponseDeadline = now.AddSeconds(workflow.Value.DriverResponseSeconds); TripStateMachine.Move(trip, TripStatus.AwaitingDriverResponse, UserId(), now, "rider_approved_quote"); }
         else TripStateMachine.Move(trip, TripStatus.Cancelled, UserId(), now, "rider_rejected_quote");
-        await db.SaveChangesAsync(ct);
         if (!approve) await matching.ReleaseAsync(proposal, "rider_rejected_quote", ct);
+        await db.SaveChangesAsync(ct);
         await realtime.PublishTripChangedAsync(trip, ct); if (approve) await realtime.PublishDriverInvitationAsync(trip, proposal, ct);
         return Ok(Snapshot(trip));
     }
@@ -140,8 +140,8 @@ public sealed class TripsController(TripDbContext db, ITripRealtimePublisher rea
         if (accept) { trip.DriverId = UserId(); trip.QuoteId = proposal.QuoteId; trip.AgreedAmount = proposal.Amount; trip.Currency = proposal.Currency; trip.DriverNameSnapshot = proposal.DriverNameSnapshot; trip.PlateNumberSnapshot = proposal.PlateNumberSnapshot; trip.VehicleNameSnapshot = proposal.VehicleNameSnapshot; trip.VehicleImageKeySnapshot = proposal.VehicleImageKeySnapshot; trip.DriverAcceptedAt = now; TripStateMachine.Move(trip, TripStatus.DriverAccepted, UserId(), now); }
         else if (trip.Proposals.Count(x => x.DriverId is not null) >= workflow.Value.MaxDriverAttempts) TripStateMachine.Move(trip, TripStatus.Failed, UserId(), now, "driver_attempt_limit_reached");
         else { TripStateMachine.Move(trip, TripStatus.Matching, UserId(), now, "driver_rejected"); trip.Proposals.Add(new TripProposal { TripId = trip.Id, CreatedAt = now, Status = ProposalStatus.Searching }); }
-        await db.SaveChangesAsync(ct);
         if (!accept) { await matching.ReleaseAsync(proposal, "driver_rejected", ct); await matching.RequestOpenProposalsAsync(trip, ct); }
+        await db.SaveChangesAsync(ct);
         await realtime.PublishTripChangedAsync(trip, ct); return Ok(Snapshot(trip));
     }
 
@@ -160,7 +160,7 @@ public sealed class TripsController(TripDbContext db, ITripRealtimePublisher rea
     private void RequireRole(string role) { if (!User.IsInRole(role)) throw Failure(403, "role_forbidden", $"The {role} role is required."); }
     private static void EnsureVersion(TripEntity trip, int version) { if (trip.StateVersion != version) throw Failure(409, "stale_trip_version", "Reload the trip before retrying."); }
     private static Exception Failure(int status, string code, string detail) => new SwiftRide.ServiceDefaults.ApiFailure(status, code, detail);
-    private static object Snapshot(TripEntity x) => new { x.Id, x.RiderId, x.DriverId, status = x.Status.ToString(), x.StateVersion, x.AgreedAmount, x.Currency, x.PaymentId, x.PaymentStatus, x.CreatedAt, x.UpdatedAt, x.DriverAcceptedAt, x.PickedUpAt, x.DroppedOffAt, x.CompletedAt, proposals = x.Proposals.Select(p => new { p.Id, p.DriverId, p.QuoteId, p.Amount, p.Currency, status = p.Status.ToString(), p.RiderApprovalDeadline, p.RiderRespondedAt, p.DriverResponseDeadline, p.DriverNameSnapshot, p.PlateNumberSnapshot, p.VehicleNameSnapshot, p.VehicleImageKeySnapshot }) };
+    private static object Snapshot(TripEntity x) => new { x.Id, x.RiderId, x.DriverId, status = x.Status.ToString(), x.StateVersion, x.AgreedAmount, x.Currency, x.PaymentId, x.PaymentStatus, x.FailureReason, x.CreatedAt, x.UpdatedAt, x.DriverAcceptedAt, x.PickedUpAt, x.DroppedOffAt, x.CompletedAt, proposals = x.Proposals.Select(p => new { p.Id, p.DriverId, p.QuoteId, p.Amount, p.Currency, status = p.Status.ToString(), p.RiderApprovalDeadline, p.RiderRespondedAt, p.DriverResponseDeadline, p.DriverNameSnapshot, p.PlateNumberSnapshot, p.VehicleNameSnapshot, p.VehicleImageKeySnapshot }) };
 }
 
 public sealed record CreateTripRequest(string PickupAddress, double PickupLatitude, double PickupLongitude, string DestinationAddress, double DestinationLatitude, double DestinationLongitude);

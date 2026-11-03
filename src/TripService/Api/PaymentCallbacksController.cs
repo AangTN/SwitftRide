@@ -14,13 +14,18 @@ public sealed class PaymentCallbacksController(TripDbContext db, ITripRealtimePu
     {
         var trip = await db.Trips.Include(x => x.History).SingleOrDefaultAsync(x => x.Id == tripId, ct)
             ?? throw new SwiftRide.ServiceDefaults.ApiFailure(404, "trip_not_found", "Trip was not found.");
+        if (!string.Equals(trip.PaymentId, request.PaymentId, StringComparison.Ordinal)) throw new SwiftRide.ServiceDefaults.ApiFailure(409, "payment_mismatch", "Payment does not belong to this trip.");
         if (trip.Status == TripStatus.Paid && request.Status.Equals("Succeeded", StringComparison.OrdinalIgnoreCase)) return Ok();
         if (trip.Status != TripStatus.PaymentPending) throw new SwiftRide.ServiceDefaults.ApiFailure(409, "payment_not_expected", "Trip is not awaiting payment.");
-        if (!string.Equals(trip.PaymentId, request.PaymentId, StringComparison.Ordinal)) throw new SwiftRide.ServiceDefaults.ApiFailure(409, "payment_mismatch", "Payment does not belong to this trip.");
-        trip.PaymentStatus = request.Status;
-        if (request.Status.Equals("Succeeded", StringComparison.OrdinalIgnoreCase)) TripStateMachine.Move(trip, TripStatus.Paid, null, clock.GetUtcNow(), "payment_succeeded");
-        else if (request.Status.Equals("Failed", StringComparison.OrdinalIgnoreCase)) TripStateMachine.Move(trip, TripStatus.Failed, null, clock.GetUtcNow(), "payment_failed");
-        else if (!request.Status.Equals("Pending", StringComparison.OrdinalIgnoreCase) && !request.Status.Equals("Processing", StringComparison.OrdinalIgnoreCase)) throw new SwiftRide.ServiceDefaults.ApiFailure(400, "invalid_payment_status", "Payment status is invalid.");
+        var status = request.Status?.ToLowerInvariant() switch
+        {
+            "succeeded" => "Succeeded", "failed" => "Failed", "pending" => "Pending", "processing" => "Processing",
+            _ => throw new SwiftRide.ServiceDefaults.ApiFailure(400, "invalid_payment_status", "Payment status is invalid.")
+        };
+        if (trip.PaymentStatus == status) return Ok();
+        trip.PaymentStatus = status;
+        if (status == "Succeeded") TripStateMachine.Move(trip, TripStatus.Paid, null, clock.GetUtcNow(), "payment_succeeded");
+        else { trip.StateVersion++; trip.UpdatedAt = clock.GetUtcNow(); }
         await db.SaveChangesAsync(ct); await realtime.PublishTripChangedAsync(trip, ct); return Ok();
     }
 }

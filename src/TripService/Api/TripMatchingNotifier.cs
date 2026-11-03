@@ -1,4 +1,4 @@
-using MassTransit;
+using SwiftRide.Trip.Infrastructure;
 using SwiftRide.Contracts.Trips;
 using SwiftRide.Trip.Domain;
 using TripEntity = SwiftRide.Trip.Domain.Trip;
@@ -11,23 +11,23 @@ public interface ITripMatchingNotifier
     Task ReleaseAsync(TripProposal proposal, string reason, CancellationToken ct);
 }
 
-/// <summary>Publishes only after the Trip transaction commits. Matching treats ProposalId as an idempotency key.</summary>
-public sealed class TripMatchingNotifier(IPublishEndpoint bus) : ITripMatchingNotifier
+/// <summary>Queues messages in the same database transaction as the Trip changes.</summary>
+public sealed class TripMatchingNotifier(TripDbContext db, TimeProvider clock) : ITripMatchingNotifier
 {
     public Task RequestOpenProposalsAsync(TripEntity trip, CancellationToken ct)
     {
         var excluded = trip.Proposals.Where(x => x.DriverId is not null).Select(x => x.DriverId!.Value).ToArray();
-        return Task.WhenAll(trip.Proposals.Where(x => x.Status == ProposalStatus.Searching)
-            .Select(x => bus.Publish(new TripMatchingRequested(trip.Id, x.Id, excluded), ct)));
+        foreach (var proposal in trip.Proposals.Where(x => x.Status == ProposalStatus.Searching))
+            TripOutboxMessage.Enqueue(db, TripMessageKind.FindDriver, trip.Id, proposal.Id,
+                new TripMatchingRequested(trip.Id, proposal.Id, excluded), clock.GetUtcNow());
+        return Task.CompletedTask;
     }
 
-    public Task ReleaseAsync(TripProposal proposal, string reason, CancellationToken ct) => proposal.DriverId is Guid driver
-        ? bus.Publish(new DriverReservationReleaseRequested(proposal.TripId, proposal.Id, driver, reason), ct)
-        : Task.CompletedTask;
-}
-
-public sealed class NoopTripMatchingNotifier : ITripMatchingNotifier
-{
-    public Task RequestOpenProposalsAsync(TripEntity trip, CancellationToken ct) => Task.CompletedTask;
-    public Task ReleaseAsync(TripProposal proposal, string reason, CancellationToken ct) => Task.CompletedTask;
+    public Task ReleaseAsync(TripProposal proposal, string reason, CancellationToken ct)
+    {
+        if (proposal.DriverId is Guid driver)
+            TripOutboxMessage.Enqueue(db, TripMessageKind.ReleaseDriver, proposal.TripId, proposal.Id,
+                new DriverReservationReleaseRequested(proposal.TripId, proposal.Id, driver, reason), clock.GetUtcNow());
+        return Task.CompletedTask;
+    }
 }

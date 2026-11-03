@@ -13,7 +13,7 @@ public static class TripStateMachine
         [TripStatus.EnRoute] = new(TripStatus.PickedUp, TripStatus.Cancelled),
         [TripStatus.PickedUp] = new(TripStatus.DroppedOff),
         [TripStatus.DroppedOff] = new(TripStatus.PaymentPending),
-        [TripStatus.PaymentPending] = new(TripStatus.Paid, TripStatus.Failed),
+        [TripStatus.PaymentPending] = new(TripStatus.Paid),
         [TripStatus.Paid] = new(), [TripStatus.Cancelled] = new(), [TripStatus.Failed] = new()
     };
 
@@ -24,6 +24,7 @@ public static class TripStateMachine
             throw new TripRuleViolation("invalid_trip_transition", $"Cannot change a trip from {trip.Status} to {target}.");
         var previous = trip.Status;
         trip.Status = target;
+        if (target == TripStatus.Failed) trip.FailureReason = reason;
         trip.StateVersion++;
         trip.UpdatedAt = now;
         trip.History.Add(new() { TripId = trip.Id, FromStatus = previous, ToStatus = target, ActorUserId = actorId, Reason = reason, CreatedAt = now });
