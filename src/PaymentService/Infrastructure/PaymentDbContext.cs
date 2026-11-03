@@ -4,7 +4,7 @@ using PaymentEntity = SwiftRide.Payment.Domain.Payment;
 
 namespace SwiftRide.Payment.Infrastructure;
 
-public sealed class PaymentDbContext(DbContextOptions<PaymentDbContext> options) : DbContext(options)
+public class PaymentDbContext(DbContextOptions<PaymentDbContext> options) : DbContext(options)
 {
     public DbSet<PaymentEntity> Payments => Set<PaymentEntity>();
     public DbSet<LedgerAccount> LedgerAccounts => Set<LedgerAccount>();
