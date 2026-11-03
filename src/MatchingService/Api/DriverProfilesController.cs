@@ -15,6 +15,6 @@ public sealed class DriverProfilesController(IDriverProfileReader profiles) : Co
         var profile = await profiles.FindAsync(id.ToString(), ct);
         if (profile is null) return Problem(statusCode: 404, title: "driver_profile_not_found", detail: "Driver profile is not available.");
         return Ok(new { driverId = profile.Id, profile.LegalName, profile.PlateNumber, profile.VehicleName,
-            profile.VehicleType, profile.VehicleImageKey });
+            profile.VehicleType, profile.VehicleImageKey, profile.AvatarImageKey });
     }
 }

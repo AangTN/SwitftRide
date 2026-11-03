@@ -66,6 +66,11 @@ namespace SwiftRide.Trip.Infrastructure.Migrations
                         .HasColumnType("datetimeoffset")
                         .HasColumnName("driver_accepted_at");
 
+                    b.Property<string>("DriverAvatarImageKeySnapshot")
+                        .HasMaxLength(500)
+                        .HasColumnType("nvarchar(500)")
+                        .HasColumnName("driver_avatar_image_key_snapshot");
+
                     b.Property<Guid?>("DriverId")
                         .HasColumnType("uniqueidentifier")
                         .HasColumnName("driver_id");
@@ -199,6 +204,11 @@ namespace SwiftRide.Trip.Infrastructure.Migrations
                         .HasMaxLength(3)
                         .HasColumnType("nvarchar(3)")
                         .HasColumnName("currency");
+
+                    b.Property<string>("DriverAvatarImageKeySnapshot")
+                        .HasMaxLength(500)
+                        .HasColumnType("nvarchar(500)")
+                        .HasColumnName("driver_avatar_image_key_snapshot");
 
                     b.Property<Guid?>("DriverId")
                         .HasColumnType("uniqueidentifier")

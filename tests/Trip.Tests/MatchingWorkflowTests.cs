@@ -47,7 +47,7 @@ public sealed class MatchingWorkflowTests
         await using var f = new Fixture();
         var trip = await f.MatchingTrip();
         var p = Assert.Single(trip.Proposals);
-        var candidate = new TripProposalCandidate(p.Id, f.Driver, "quote", 25000, "VND", "Verified driver", "59A", "Bike", null);
+        var candidate = new TripProposalCandidate(p.Id, f.Driver, "quote", 25000, "VND", "Verified driver", "59A", "Bike", null, "avatars/driver.webp");
         var handler = f.Handler();
         Assert.True(await handler.ApplyAsync(new TripMatchingResult(trip.Id, p.Id, candidate), default));
         Assert.Equal(f.Clock.GetUtcNow().AddSeconds(90), p.RiderApprovalDeadline);
@@ -64,6 +64,10 @@ public sealed class MatchingWorkflowTests
         Assert.Equal(TripStatus.DriverAccepted, trip.Status);
         Assert.Equal(f.Driver, trip.DriverId);
         Assert.Equal(25000, trip.AgreedAmount);
+        f.Db.ChangeTracker.Clear();
+        var saved = await f.Db.Trips.Include(x => x.Proposals).SingleAsync();
+        Assert.Equal("avatars/driver.webp", saved.DriverAvatarImageKeySnapshot);
+        Assert.Equal("avatars/driver.webp", Assert.Single(saved.Proposals).DriverAvatarImageKeySnapshot);
         Assert.Single(await f.Db.OutboxMessages.Where(x => x.Kind == TripMessageKind.ConfirmDriver).ToListAsync());
     }
 

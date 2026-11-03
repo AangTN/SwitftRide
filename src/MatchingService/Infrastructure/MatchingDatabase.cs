@@ -195,6 +195,9 @@ public sealed class MatchingDatabase : IDriverProfileReader, IMatchingStore
 
     public async Task InitializeAsync(bool seed, CancellationToken ct = default)
     {
+        // Idempotent Mongo schema upgrade: old profiles have no avatar. Never overwrite a saved image key.
+        await Profiles.UpdateManyAsync(Builders<DriverProfile>.Filter.Exists(x => x.AvatarImageKey, false),
+            Builders<DriverProfile>.Update.Set(x => x.AvatarImageKey, (string?)null), cancellationToken: ct);
         await Database.GetCollection<MatchingJob>("matching_jobs").Indexes.CreateOneAsync(new CreateIndexModel<MatchingJob>(
             Builders<MatchingJob>.IndexKeys.Ascending(x => x.WorkPending).Ascending(x => x.NextAttemptAt).Ascending(x => x.LeaseUntil)), cancellationToken: ct);
         await Profiles.Indexes.CreateOneAsync(new CreateIndexModel<DriverProfile>(

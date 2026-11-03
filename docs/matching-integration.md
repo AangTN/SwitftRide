@@ -75,6 +75,14 @@
 
 ## Database và chạy kiểm tra
 
+- Avatar tài xế: `driver_profiles.avatarImageKey` lưu key/đường dẫn ảnh, cho phép
+  null. Matching tự bổ sung null cho document cũ chưa có field khi khởi động,
+  không ghi đè avatar đã có. API hồ sơ trả `avatarImageKey`, Matching gửi
+  `driverAvatarImageKey` cùng kết quả đề xuất. Trip lưu
+  `driver_avatar_image_key_snapshot` ở cả `trip_proposals` và `trips` qua migration
+  `DriverAvatarSnapshot`; GET chuyến trả `driverAvatarImageKeySnapshot`.
+  Chưa có ảnh thì frontend dùng icon mặc định. Phần này thêm lưu/trả tham chiếu
+  ảnh, không tạo API upload hoặc tự gán ảnh cho tài xế.
 - Migration SQL Server `TripVehicleType` thêm `trips.vehicle_type`;
   dữ liệu cũ mặc định `Motorbike`. Không có migration PostgreSQL.
 - MongoDB tạo collection/index `matching_jobs` khi khởi động. Không cần bật

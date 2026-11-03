@@ -2,6 +2,7 @@ using System.Reflection;
 using MassTransit;
 using Microsoft.Extensions.DependencyInjection;
 using MongoDB.Driver;
+using MongoDB.Bson;
 using SwiftRide.Contracts.Trips;
 using SwiftRide.Matching.Api;
 using SwiftRide.Matching.Application;
@@ -22,6 +23,23 @@ public sealed class MongoFactAttribute : FactAttribute
 
 public sealed class MatchingIntegrationTests
 {
+    [MongoFact]
+    public async Task Avatar_upgrade_fills_missing_field_without_overwriting_existing_avatars()
+    {
+        await using var f = await Fixture.Create();
+        await f.Db.Profiles.UpdateOneAsync(x => x.Id == f.Driver,
+            Builders<DriverProfile>.Update.Set(x => x.AvatarImageKey, "avatars/existing.webp"));
+        var legacyId = Guid.NewGuid().ToString();
+        var rawProfiles = f.Db.Database.GetCollection<BsonDocument>("driver_profiles");
+        await rawProfiles.InsertOneAsync(new BsonDocument { { "_id", legacyId }, { "plateNumber", "LEGACY-TEST" } });
+        await f.Db.InitializeAsync(false);
+        await f.Db.InitializeAsync(false);
+        Assert.Equal("avatars/existing.webp", (await f.Db.FindAsync(f.Driver, default))!.AvatarImageKey);
+        var legacy = await rawProfiles.Find(new BsonDocument("_id", legacyId)).SingleAsync();
+        Assert.True(legacy.Contains("avatarImageKey"));
+        Assert.True(legacy["avatarImageKey"].IsBsonNull);
+    }
+
     [MongoFact]
     public async Task Consumers_deliver_find_confirm_and_release_through_a_message_bus()
     {
@@ -136,7 +154,7 @@ public sealed class MatchingIntegrationTests
         await f.Jobs.EnqueueAsync(request, default);
         Assert.False(await f.Dispatcher.DispatchOneAsync(default));
         Assert.Equal(1, f.Goong.Calls);
-        Assert.NotNull(Assert.Single(f.Transport.Messages).Candidate);
+        Assert.Equal("avatars/test.webp", Assert.Single(f.Transport.Messages).Candidate!.DriverAvatarImageKey);
     }
 
     [MongoFact]
@@ -272,7 +290,7 @@ public sealed class MatchingIntegrationTests
         {
             var f = new Fixture();
             await f.Db.InitializeAsync(false);
-            await f.Db.Profiles.InsertOneAsync(new DriverProfile { Id = f.Driver, LegalName = "Driver", PlateNumber = "59-Test", VehicleName = "Bike" });
+            await f.Db.Profiles.InsertOneAsync(new DriverProfile { Id = f.Driver, LegalName = "Driver", PlateNumber = "59-Test", VehicleName = "Bike", AvatarImageKey = "avatars/test.webp" });
             await f.Db.UpdateAvailabilityAsync(f.Driver, "Motorbike", new DriverLocationUpdate(true, 10.78, 106.69), DateTime.UtcNow, default);
             return f;
         }

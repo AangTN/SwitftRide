@@ -1,7 +1,7 @@
 namespace SwiftRide.Contracts.Trips;
 
 public sealed record TripProposalCandidate(Guid ProposalId, Guid DriverId, string QuoteId, decimal Amount, string Currency,
-    string DriverName, string PlateNumber, string VehicleName, string? VehicleImageKey);
+    string DriverName, string PlateNumber, string VehicleName, string? VehicleImageKey, string? DriverAvatarImageKey = null);
 
 public sealed record PaymentResult(Guid TripId, string PaymentId, string Status);
 

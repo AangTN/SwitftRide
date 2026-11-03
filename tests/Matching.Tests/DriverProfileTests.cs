@@ -60,6 +60,7 @@ public sealed class DriverProfileTests : IAsyncLifetime
         Assert.Equal(DriverId, json.GetProperty("driverId").GetString());
         Assert.Equal("Tên tài xế đã xác minh", json.GetProperty("legalName").GetString());
         Assert.Equal("59A1-12345", json.GetProperty("plateNumber").GetString());
+        Assert.Equal("avatars/driver.webp", json.GetProperty("avatarImageKey").GetString());
     }
     private sealed class ProfileFactory(string publicKey) : WebApplicationFactory<Program>
     {
@@ -81,7 +82,8 @@ public sealed class DriverProfileTests : IAsyncLifetime
     private sealed class FakeProfiles : IDriverProfileReader
     {
         public Task<DriverProfile?> FindAsync(string userId, CancellationToken ct) => Task.FromResult(userId == DriverId ? new DriverProfile {
-            Id = DriverId, LegalName = "Tên tài xế đã xác minh", PlateNumber = "59A1-12345", VehicleName = "Honda Wave Alpha"
+            Id = DriverId, LegalName = "Tên tài xế đã xác minh", PlateNumber = "59A1-12345", VehicleName = "Honda Wave Alpha",
+            AvatarImageKey = "avatars/driver.webp"
         } : null);
     }
 }

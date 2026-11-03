@@ -8,6 +8,7 @@ public sealed class DriverProfile
     public string VehicleName { get; set; } = "";
     public string VehicleType { get; set; } = "Motorbike";
     public string? VehicleImageKey { get; set; }
+    public string? AvatarImageKey { get; set; }
     public DateTime CreatedAt { get; set; }
     public DateTime UpdatedAt { get; set; }
 }

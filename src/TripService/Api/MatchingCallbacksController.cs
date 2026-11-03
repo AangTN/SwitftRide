@@ -67,6 +67,7 @@ public sealed class TripMatchingResultHandler(TripDbContext db, ITripRealtimePub
         var now = clock.GetUtcNow();
         proposal.DriverId = candidate.DriverId; proposal.QuoteId = candidate.QuoteId; proposal.Amount = candidate.Amount; proposal.Currency = candidate.Currency;
         proposal.DriverNameSnapshot = candidate.DriverName; proposal.PlateNumberSnapshot = candidate.PlateNumber; proposal.VehicleNameSnapshot = candidate.VehicleName; proposal.VehicleImageKeySnapshot = candidate.VehicleImageKey;
+        proposal.DriverAvatarImageKeySnapshot = candidate.DriverAvatarImageKey;
         proposal.Status = ProposalStatus.AwaitingRiderApproval; proposal.RiderApprovalDeadline = now.AddSeconds(workflow.Value.RiderApprovalSeconds);
         TripStateMachine.Move(trip, TripStatus.AwaitingRiderApproval, null, now, "matching_candidate_offered");
         await db.SaveChangesAsync(ct); await realtime.PublishTripChangedAsync(trip, ct);

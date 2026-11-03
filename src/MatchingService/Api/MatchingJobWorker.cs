@@ -45,7 +45,7 @@ public sealed class MatchingJobDispatcher(MatchingJobStore jobs, MatchingCoordin
                         request.PickupLatitude, request.PickupLongitude, request.VehicleType, request.ExcludedDriverIds.ToArray()), ct);
                     result = new TripMatchingResult(tripId, proposalId, driver is null ? null :
                         new TripProposalCandidate(proposalId, Guid.Parse(driver.DriverId), quote.Id, quote.TotalAmount,
-                            quote.Currency, driver.LegalName, driver.PlateNumber, driver.VehicleName, driver.VehicleImageKey),
+                            quote.Currency, driver.LegalName, driver.PlateNumber, driver.VehicleName, driver.VehicleImageKey, driver.AvatarImageKey),
                         driver is null ? "no_driver_available" : null);
                 }
                 catch (MatchingFailureException e) when (e.Code != "trip_already_assigned" && (e.StatusCode < 500 || job.Attempts >= 3))

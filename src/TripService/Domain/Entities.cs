@@ -22,6 +22,7 @@ public sealed class Trip
     public decimal? AgreedAmount { get; set; }
     public string Currency { get; set; } = "VND";
     public string? DriverNameSnapshot { get; set; }
+    public string? DriverAvatarImageKeySnapshot { get; set; }
     public string? PlateNumberSnapshot { get; set; }
     public string? VehicleNameSnapshot { get; set; }
     public string? VehicleImageKeySnapshot { get; set; }
@@ -47,6 +48,7 @@ public sealed class TripProposal
     public decimal? Amount { get; set; }
     public string Currency { get; set; } = "VND";
     public string? DriverNameSnapshot { get; set; }
+    public string? DriverAvatarImageKeySnapshot { get; set; }
     public string? PlateNumberSnapshot { get; set; }
     public string? VehicleNameSnapshot { get; set; }
     public string? VehicleImageKeySnapshot { get; set; }

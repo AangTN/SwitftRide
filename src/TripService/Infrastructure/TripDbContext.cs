@@ -35,6 +35,7 @@ public sealed class TripDbContext(DbContextOptions<TripDbContext> options) : DbC
             e.Property(x => x.PickupAddress).HasMaxLength(500); e.Property(x => x.DestinationAddress).HasMaxLength(500);
             e.Property(x => x.QuoteId).HasMaxLength(36);
             e.Property(x => x.DriverNameSnapshot).HasMaxLength(150); e.Property(x => x.PlateNumberSnapshot).HasMaxLength(20);
+            e.Property(x => x.DriverAvatarImageKeySnapshot).HasMaxLength(500);
             e.Property(x => x.VehicleNameSnapshot).HasMaxLength(150); e.Property(x => x.VehicleImageKeySnapshot).HasMaxLength(500);
             e.Property(x => x.PaymentId).HasMaxLength(100); e.Property(x => x.PaymentStatus).HasMaxLength(30);
             e.Property(x => x.FailureReason).HasMaxLength(100);
@@ -58,6 +59,7 @@ public sealed class TripDbContext(DbContextOptions<TripDbContext> options) : DbC
             e.Property(x => x.Status).HasConversion<string>().HasMaxLength(30);
             e.Property(x => x.QuoteId).HasMaxLength(100); e.Property(x => x.Amount).HasPrecision(18, 2);
             e.Property(x => x.Currency).HasMaxLength(3); e.Property(x => x.DriverNameSnapshot).HasMaxLength(150);
+            e.Property(x => x.DriverAvatarImageKeySnapshot).HasMaxLength(500);
             e.Property(x => x.PlateNumberSnapshot).HasMaxLength(20); e.Property(x => x.VehicleNameSnapshot).HasMaxLength(150);
             e.Property(x => x.VehicleImageKeySnapshot).HasMaxLength(500);
             e.HasIndex(x => new { x.TripId, x.DriverId }).IsUnique();

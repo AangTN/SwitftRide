@@ -43,7 +43,8 @@ public sealed record MatchedDriver(
     string? VehicleImageKey,
     double DistanceMeters,
     string Status,
-    DateTime? ReservedUntil);
+    DateTime? ReservedUntil,
+    string? AvatarImageKey = null);
 
 public sealed class MatchingOptions
 {
@@ -263,7 +264,7 @@ public sealed class MatchingCoordinator(
         return new MatchedDriver(profile.Id, profile.LegalName, profile.PlateNumber, profile.VehicleName,
             profile.VehicleType, profile.VehicleImageKey,
             DistanceMeters(pickupLatitude, pickupLongitude, location.Coordinates[1], location.Coordinates[0]),
-            availability.Status, availability.ReservedUntil);
+            availability.Status, availability.ReservedUntil, profile.AvatarImageKey);
     }
 
     public static string NormalizeVehicleType(string? vehicleType)
