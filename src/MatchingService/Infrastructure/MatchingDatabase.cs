@@ -65,7 +65,7 @@ public sealed class MatchingDatabase : IDriverProfileReader, IMatchingStore
 
     public async Task<IReadOnlyList<DriverAvailability>> FindNearbyAvailableDriversAsync(
         GeoPoint pickup, string vehicleType, DateTime locationUpdatedAfter, double maxDistanceMeters,
-        int maxCandidates, DateTime now, CancellationToken ct)
+        int maxCandidates, DateTime now, IReadOnlyCollection<string> excludedDriverIds, CancellationToken ct)
     {
         await Drivers.UpdateManyAsync(
             Builders<DriverAvailability>.Filter.And(
@@ -95,6 +95,8 @@ public sealed class MatchingDatabase : IDriverProfileReader, IMatchingStore
                 })
             }
         };
+        if (excludedDriverIds.Count > 0)
+            filter.Add("_id", new BsonDocument("$nin", new BsonArray(excludedDriverIds)));
         return await Drivers.Find(new BsonDocumentFilterDefinition<DriverAvailability>(filter))
             .Limit(maxCandidates).ToListAsync(ct);
     }

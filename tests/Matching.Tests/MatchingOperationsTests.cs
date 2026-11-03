@@ -9,7 +9,7 @@ public sealed class MatchingOperationsTests
     [Fact]
     public void Fare_is_calculated_from_route_and_pricing_snapshot()
     {
-        var amount = FareCalculator.Calculate(new RouteMetrics(1200, 120), new PricingOptions
+        var amount = CreateFareCalculator().Calculate(new RouteMetrics(1200, 120), new PricingOptions
         {
             PerKilometer = 5000,
             PerMinute = 500,
@@ -19,13 +19,13 @@ public sealed class MatchingOperationsTests
             TaxRate = 0.1m
         });
 
-        Assert.Equal(10692m, amount);
+        Assert.Equal(10593m, amount);
     }
 
     [Fact]
     public void Half_VND_amount_rounds_up()
     {
-        var amount = FareCalculator.Calculate(new RouteMetrics(1, 0), new PricingOptions
+        var amount = CreateFareCalculator().Calculate(new RouteMetrics(1, 0), new PricingOptions
         {
             PerKilometer = 500
         });
@@ -49,6 +49,23 @@ public sealed class MatchingOperationsTests
         Assert.Equal(next.Id, match.DriverId);
         Assert.Equal(2, store.ReservationAttempts);
         Assert.Equal("Reserved", store.Reservation!.Status);
+    }
+
+    [Fact]
+    public async Task Matching_excludes_drivers_rejected_by_the_previous_proposal()
+    {
+        var excludedDriverId = Guid.NewGuid();
+        var excludedDriver = AvailableDriver(excludedDriverId.ToString(), 0.001);
+        var nextDriver = AvailableDriver("driver-2", 0.002);
+        var store = new FakeMatchingStore([excludedDriver, nextDriver]);
+        var coordinator = CreateCoordinator(store, new FakeProfiles(), new FakeGoong());
+
+        var match = await coordinator.FindAndReserveNearestAsync(new DriverMatchRequest(
+            Guid.NewGuid(), Guid.NewGuid(), 0, 0, ExcludedDriverIds: [excludedDriverId]), CancellationToken.None);
+
+        Assert.NotNull(match);
+        Assert.Equal(nextDriver.Id, match.DriverId);
+        Assert.Equal([excludedDriverId.ToString()], store.ExcludedDriverIds);
     }
 
     [Fact]
@@ -115,8 +132,10 @@ public sealed class MatchingOperationsTests
 
     private static MatchingCoordinator CreateCoordinator(
         FakeMatchingStore store, FakeProfiles profiles, FakeGoong goong) =>
-        new(store, profiles, goong, new MatchingOptions(), new PricingOptions());
+        new(store, profiles, goong, CreateFareCalculator(), new MatchingOptions(), new PricingOptions());
 
+    private static FareCalculator CreateFareCalculator() =>
+        new(new StandardFareStrategy(), new SurgeFareStrategy(), new PromotionFareStrategy());
     private static DriverAvailability AvailableDriver(string id, double longitude) => new()
     {
         Id = id,
@@ -131,6 +150,7 @@ public sealed class MatchingOperationsTests
     {
         public string? FailedDriverId { get; init; }
         public int ReservationAttempts { get; private set; }
+        public IReadOnlyCollection<string> ExcludedDriverIds { get; private set; } = [];
         public DriverAvailability? Reservation { get; private set; }
         public DriverAvailability? TripAssignment { get; init; }
         public FareQuote? ExistingQuote { get; init; }
@@ -141,8 +161,12 @@ public sealed class MatchingOperationsTests
 
         public Task<IReadOnlyList<DriverAvailability>> FindNearbyAvailableDriversAsync(
             GeoPoint pickup, string vehicleType, DateTime locationUpdatedAfter, double maxDistanceMeters,
-            int maxCandidates, DateTime now, CancellationToken ct) =>
-            Task.FromResult(candidates);
+            int maxCandidates, DateTime now, IReadOnlyCollection<string> excludedDriverIds, CancellationToken ct)
+        {
+            ExcludedDriverIds = excludedDriverIds;
+            return Task.FromResult<IReadOnlyList<DriverAvailability>>(
+                candidates.Where(candidate => !excludedDriverIds.Contains(candidate.Id, StringComparer.Ordinal)).ToArray());
+        }
 
         public Task<DriverAvailability?> FindActiveReservationAsync(string proposalId, DateTime now, CancellationToken ct) =>
             Task.FromResult(Reservation is not null && Reservation.ReservedUntil > now ? Reservation : null);
@@ -217,5 +241,11 @@ public sealed class MatchingOperationsTests
 
         public Task<GeocodedAddress?> GeocodeAsync(string address, CancellationToken ct) =>
             Task.FromResult<GeocodedAddress?>(null);
+
+        public Task<GeocodedAddress?> ReverseGeocodeAsync(double latitude, double longitude, CancellationToken ct) =>
+            Task.FromResult<GeocodedAddress?>(null);
+
+        public Task<IReadOnlyList<PlaceSuggestion>> SearchPlacesAsync(string input, CancellationToken ct) =>
+            Task.FromResult<IReadOnlyList<PlaceSuggestion>>([]);
     }
 }

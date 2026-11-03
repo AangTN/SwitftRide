@@ -15,7 +15,8 @@ public sealed record DriverMatchRequest(
     Guid ProposalId,
     double PickupLatitude,
     double PickupLongitude,
-    string VehicleType = "Motorbike");
+    string VehicleType = "Motorbike",
+    IReadOnlyList<Guid>? ExcludedDriverIds = null);
 
 public sealed record FareQuoteRequest(
     Guid TripId,
@@ -29,6 +30,8 @@ public sealed record FareQuoteRequest(
 public sealed record RouteMetrics(double DistanceMeters, int DurationSeconds);
 
 public sealed record GeocodedAddress(string FormattedAddress, double Latitude, double Longitude, string? PlaceId);
+
+public sealed record PlaceSuggestion(string Description, string PlaceId);
 
 public sealed record MatchedDriver(
     string DriverId,
@@ -66,7 +69,7 @@ public interface IMatchingStore
         string driverId, string vehicleType, DriverLocationUpdate update, DateTime now, CancellationToken ct);
     Task<IReadOnlyList<DriverAvailability>> FindNearbyAvailableDriversAsync(
         GeoPoint pickup, string vehicleType, DateTime locationUpdatedAfter, double maxDistanceMeters,
-        int maxCandidates, DateTime now, CancellationToken ct);
+        int maxCandidates, DateTime now, IReadOnlyCollection<string> excludedDriverIds, CancellationToken ct);
     Task<DriverAvailability?> FindActiveReservationAsync(string proposalId, DateTime now, CancellationToken ct);
     Task<DriverAvailability?> FindActiveAssignmentForTripAsync(string tripId, DateTime now, CancellationToken ct);
     Task<bool> TryReserveDriverAsync(
@@ -87,12 +90,15 @@ public interface IGoongClient
         double destinationLatitude, double destinationLongitude,
         string vehicleType, CancellationToken ct);
     Task<GeocodedAddress?> GeocodeAsync(string address, CancellationToken ct);
+    Task<GeocodedAddress?> ReverseGeocodeAsync(double latitude, double longitude, CancellationToken ct);
+    Task<IReadOnlyList<PlaceSuggestion>> SearchPlacesAsync(string input, CancellationToken ct);
 }
 
 public sealed class MatchingCoordinator(
     IMatchingStore store,
     IDriverProfileReader profiles,
     IGoongClient goong,
+    FareCalculator fareCalculator,
     MatchingOptions matchingOptions,
     PricingOptions pricingOptions)
 {
@@ -113,11 +119,12 @@ public sealed class MatchingCoordinator(
         if (request.TripId == Guid.Empty || request.ProposalId == Guid.Empty)
             throw new MatchingFailureException(400, "invalid_proposal", "TripId and ProposalId must be non-empty UUIDs.");
         ValidateCoordinate(request.PickupLatitude, request.PickupLongitude);
+        var excludedDriverIds = NormalizeExcludedDriverIds(request.ExcludedDriverIds);
         var vehicleType = NormalizeVehicleType(request.VehicleType);
         var now = DateTime.UtcNow;
         var existing = await store.FindActiveReservationAsync(request.ProposalId.ToString(), now, ct);
         if (existing is not null)
-            return await ReturnExistingAssignmentAsync(existing, request, vehicleType, ct);
+            return await ReturnExistingAssignmentAsync(existing, request, vehicleType, excludedDriverIds, ct);
 
         var tripAssignment = await store.FindActiveAssignmentForTripAsync(request.TripId.ToString(), now, ct);
         if (tripAssignment is not null)
@@ -127,7 +134,7 @@ public sealed class MatchingCoordinator(
         var pickup = ToGeoPoint(request.PickupLatitude, request.PickupLongitude);
         var candidates = await store.FindNearbyAvailableDriversAsync(
             pickup, vehicleType, now.AddSeconds(-matching.LocationMaxAgeSeconds),
-            matching.MaxSearchDistanceMeters, matching.MaxCandidates, now, ct);
+            matching.MaxSearchDistanceMeters, matching.MaxCandidates, now, excludedDriverIds, ct);
         foreach (var candidate in candidates)
         {
             var candidateLocation = candidate.Location;
@@ -149,7 +156,7 @@ public sealed class MatchingCoordinator(
 
             existing = await store.FindActiveReservationAsync(request.ProposalId.ToString(), now, ct);
             if (existing is not null)
-                return await ReturnExistingAssignmentAsync(existing, request, vehicleType, ct);
+                return await ReturnExistingAssignmentAsync(existing, request, vehicleType, excludedDriverIds, ct);
             tripAssignment = await store.FindActiveAssignmentForTripAsync(request.TripId.ToString(), now, ct);
             if (tripAssignment is not null)
                 throw new MatchingFailureException(409, "trip_already_assigned",
@@ -175,7 +182,7 @@ public sealed class MatchingCoordinator(
         var vehicleType = NormalizeVehicleType(request.VehicleType);
         var route = await goong.GetRouteAsync(request.PickupLatitude, request.PickupLongitude,
             request.DestinationLatitude, request.DestinationLongitude, vehicleType, ct);
-        var total = FareCalculator.Calculate(route, pricing);
+        var total = fareCalculator.Calculate(route, pricing);
         var now = DateTime.UtcNow;
         var quote = new FareQuote
         {
@@ -207,17 +214,37 @@ public sealed class MatchingCoordinator(
     public Task<GeocodedAddress?> GeocodeAsync(string address, CancellationToken ct) =>
         goong.GeocodeAsync(address.Trim(), ct);
 
-    private async Task<MatchedDriver> ReturnExistingAssignmentAsync(
-        DriverAvailability existing, DriverMatchRequest request, string vehicleType, CancellationToken ct)
+    public Task<GeocodedAddress?> ReverseGeocodeAsync(double latitude, double longitude, CancellationToken ct)
     {
-        if (existing.CurrentTripId != request.TripId.ToString() || existing.VehicleType != vehicleType)
+        ValidateCoordinate(latitude, longitude);
+        return goong.ReverseGeocodeAsync(latitude, longitude, ct);
+    }
+
+    public Task<IReadOnlyList<PlaceSuggestion>> SearchPlacesAsync(string input, CancellationToken ct) =>
+        goong.SearchPlacesAsync(input.Trim(), ct);
+
+    private async Task<MatchedDriver> ReturnExistingAssignmentAsync(
+        DriverAvailability existing, DriverMatchRequest request, string vehicleType,
+        IReadOnlyCollection<string> excludedDriverIds, CancellationToken ct)
+    {
+        if (existing.CurrentTripId != request.TripId.ToString() || existing.VehicleType != vehicleType ||
+            excludedDriverIds.Contains(existing.Id, StringComparer.Ordinal))
             throw new MatchingFailureException(409, "proposal_reservation_conflict",
-                "This proposal already has an active reservation for a different trip or vehicle type.");
+                "This proposal's active reservation does not match the requested trip, vehicle type, or exclusion list.");
         var match = await ToMatchedDriverAsync(existing, request.PickupLatitude, request.PickupLongitude, ct);
         if (match.DistanceMeters > matching.MaxSearchDistanceMeters)
             throw new MatchingFailureException(409, "proposal_reservation_conflict",
                 "This proposal already has an active reservation outside the requested search area.");
         return match;
+    }
+
+    private static IReadOnlyCollection<string> NormalizeExcludedDriverIds(IReadOnlyList<Guid>? driverIds)
+    {
+        if (driverIds is null) return [];
+        if (driverIds.Count > 100 || driverIds.Contains(Guid.Empty))
+            throw new MatchingFailureException(400, "invalid_excluded_drivers",
+                "At most 100 non-empty driver IDs may be excluded.");
+        return driverIds.Select(id => id.ToString()).Distinct(StringComparer.Ordinal).ToArray();
     }
 
     private async Task<MatchedDriver> ToMatchedDriverAsync(
@@ -272,9 +299,12 @@ public sealed class MatchingCoordinator(
     private static double DegreesToRadians(double degrees) => degrees * Math.PI / 180;
 }
 
-public static class FareCalculator
+public sealed class FareCalculator(
+    IStandardFareStrategy standard,
+    ISurgeFareStrategy surge,
+    IPromotionFareStrategy promotion)
 {
-    public static decimal Calculate(RouteMetrics route, PricingOptions pricing)
+    public decimal Calculate(RouteMetrics route, PricingOptions pricing)
     {
         if (!double.IsFinite(route.DistanceMeters) || route.DistanceMeters < 0 || route.DurationSeconds < 0)
             throw new MatchingFailureException(502, "invalid_route_metrics",
@@ -283,10 +313,46 @@ public static class FareCalculator
             pricing.Surge <= 0 || pricing.PromotionFactor <= 0 || pricing.TaxRate is < 0 or > 1)
             throw new InvalidOperationException("Pricing configuration contains an invalid rate or factor.");
 
+        var standardFare = standard.Calculate(route, pricing);
+        var surgedFare = surge.Apply(standardFare, pricing);
+        var promotedFare = promotion.Apply(surgedFare, pricing);
+        return decimal.Round(promotedFare, 0, MidpointRounding.AwayFromZero);
+    }
+}
+
+public interface IStandardFareStrategy
+{
+    decimal Calculate(RouteMetrics route, PricingOptions pricing);
+}
+
+public interface ISurgeFareStrategy
+{
+    decimal Apply(decimal standardFare, PricingOptions pricing);
+}
+
+public interface IPromotionFareStrategy
+{
+    decimal Apply(decimal surgedFare, PricingOptions pricing);
+}
+
+public sealed class StandardFareStrategy : IStandardFareStrategy
+{
+    public decimal Calculate(RouteMetrics route, PricingOptions pricing)
+    {
         var distanceKm = (decimal)route.DistanceMeters / 1000;
         var durationMinutes = (decimal)route.DurationSeconds / 60;
-        var subtotal = distanceKm * pricing.PerKilometer + durationMinutes * pricing.PerMinute + pricing.Toll;
-        return decimal.Round(subtotal * pricing.Surge * pricing.PromotionFactor * (1 + pricing.TaxRate),
-            0, MidpointRounding.AwayFromZero);
+        return distanceKm * pricing.PerKilometer + durationMinutes * pricing.PerMinute;
     }
+}
+
+public sealed class SurgeFareStrategy : ISurgeFareStrategy
+{
+    public decimal Apply(decimal standardFare, PricingOptions pricing) =>
+        standardFare * pricing.Surge + pricing.Toll;
+}
+
+public sealed class PromotionFareStrategy : IPromotionFareStrategy
+{
+    public decimal Apply(decimal surgedFare, PricingOptions pricing) =>
+        surgedFare * pricing.PromotionFactor * (1 + pricing.TaxRate);
 }

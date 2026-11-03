@@ -77,8 +77,10 @@ Các API dưới đây đi qua Gateway (`http://localhost:5000`) và yêu cầu 
 | `POST /api/matching/reservations/{proposalId}/decline?tripId=...` | Driver | Từ chối khóa của chính tài xế; trả tài xế về Available |
 | `POST /api/matching/quotes` | Rider | Lấy tuyến Goong, tính giá và lưu snapshot cho proposal |
 | `GET /api/matching/places/geocode?address=...` | Rider, Driver | Tra địa chỉ thành tọa độ bằng Goong |
+| `GET /api/matching/places/search?input=...` | Rider, Driver | Gợi ý địa điểm bằng Goong Places Autocomplete |
+| `GET /api/matching/places/reverse?latitude=...&longitude=...` | Rider, Driver | Tra địa chỉ từ tọa độ bằng Goong |
 
-`proposals/assign` nhận `tripId`, `proposalId`, `pickupLatitude`, `pickupLongitude` và `vehicleType` (`Motorbike`, `Car4Seats`, `Car7Seats`). `quotes` nhận `tripId`, `proposalId`, tọa độ điểm đi/đến và `vehicleType`. Giá dùng distance/duration của Goong cùng cấu hình `Pricing`; quote là bất biến theo proposal, giữ lại sau khi hết hạn. Vị trí cũ hơn 120 giây không được ghép; khóa hết hạn sau 90 giây và được giải phóng có điều kiện trong lần tìm tiếp theo.
+`proposals/assign` nhận `tripId`, `proposalId`, `pickupLatitude`, `pickupLongitude`, `vehicleType` (`Motorbike`, `Car4Seats`, `Car7Seats`) và danh sách UUID tùy chọn `excludedDriverIds` từ Trip cho các tài xế đã bị từ chối. `quotes` nhận `tripId`, `proposalId`, tọa độ điểm đi/đến và `vehicleType`. Giá áp dụng `p = ((cd*d + ct*t)*s + cm)*eta*(1+T)`: quãng đường/thời gian cơ sở, surge, toll, khuyến mãi và thuế; dùng decimal và làm tròn VND lên tại nửa đồng. Quote lưu snapshot bất biến theo proposal, giữ lại sau khi hết hạn. Vị trí cũ hơn 120 giây không được ghép; khóa hết hạn sau 90 giây và được giải phóng có điều kiện trong lần tìm tiếp theo.
 
 Đặt `GOONG_API_KEY` trong `.env` để bật tra địa chỉ và định tuyến. Compose chỉ chuyển khóa cho Matching backend; không đưa khóa này vào Flutter. Khi chưa cấu hình, API Goong trả lỗi `503 goong_not_configured` thay vì ước lượng tuyến/giá giả. Có thể chỉnh bán kính tìm kiếm, thời hạn vị trí/khóa/báo giá và đơn giá trong cấu hình `Matching`/`Pricing` của Matching.
 

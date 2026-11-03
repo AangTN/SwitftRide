@@ -130,6 +130,38 @@ public sealed class MatchingController(MatchingCoordinator coordinator) : Contro
             : Ok(result);
     }
 
+    [HttpGet("places/search"), Authorize(Roles = "Rider,Driver")]
+    public async Task<IActionResult> SearchPlaces([FromQuery] string? input, CancellationToken ct)
+    {
+        if (string.IsNullOrWhiteSpace(input) || input.Trim().Length > 200)
+            return ValidationProblem(new ValidationProblemDetails(new Dictionary<string, string[]>
+            {
+                ["input"] = ["Search text is required and must be at most 200 characters."]
+            }));
+        return Ok(await coordinator.SearchPlacesAsync(input, ct));
+    }
+
+    [HttpGet("places/reverse"), Authorize(Roles = "Rider,Driver")]
+    public async Task<IActionResult> ReverseGeocode(
+        [FromQuery] double? latitude, [FromQuery] double? longitude, CancellationToken ct)
+    {
+        if (latitude is null || longitude is null)
+            return ValidationProblem(new ValidationProblemDetails(new Dictionary<string, string[]>
+            {
+                ["coordinates"] = ["Latitude and longitude are required."]
+            }));
+        MatchingCoordinator.ValidateCoordinate(latitude.Value, longitude.Value);
+        var result = await coordinator.ReverseGeocodeAsync(latitude.Value, longitude.Value, ct);
+        return result is null
+            ? NotFound(new ProblemDetails
+            {
+                Status = StatusCodes.Status404NotFound,
+                Title = "address_not_found",
+                Detail = "The address provider could not find this location."
+            })
+            : Ok(result);
+    }
+
     private string UserId() => Guid.TryParse(User.FindFirstValue("sub"), out var id)
         ? id.ToString()
         : throw new MatchingFailureException(401, "invalid_identity", "A valid user identity is required.");

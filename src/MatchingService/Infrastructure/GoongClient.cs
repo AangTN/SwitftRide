@@ -46,28 +46,44 @@ public sealed class GoongClient(HttpClient client, IConfiguration configuration,
     {
         var uri = BuildUri("Geocode", new Dictionary<string, string?> { ["address"] = address });
         using var document = await GetDocumentAsync(uri, ct);
+        return ParseGeocodedAddress(document.RootElement);
+    }
+
+    public async Task<GeocodedAddress?> ReverseGeocodeAsync(double latitude, double longitude, CancellationToken ct)
+    {
+        var uri = BuildUri("Geocode", new Dictionary<string, string?>
+        {
+            ["latlng"] = Coordinate(latitude, longitude)
+        });
+        using var document = await GetDocumentAsync(uri, ct);
+        return ParseGeocodedAddress(document.RootElement);
+    }
+
+    public async Task<IReadOnlyList<PlaceSuggestion>> SearchPlacesAsync(string input, CancellationToken ct)
+    {
+        var uri = BuildUri("Place/AutoComplete", new Dictionary<string, string?> { ["input"] = input });
+        using var document = await GetDocumentAsync(uri, ct);
         var root = document.RootElement;
         if (root.ValueKind != JsonValueKind.Object)
-            throw new MatchingFailureException(502, "goong_response_invalid", "The address provider returned an invalid response.");
+            throw new MatchingFailureException(502, "goong_response_invalid", "The place provider returned an invalid response.");
         var status = GetStatus(root);
-        if (status == "ZERO_RESULTS") return null;
+        if (status == "ZERO_RESULTS") return [];
         EnsureSuccessfulStatus(status);
-        if (!root.TryGetProperty("results", out var results) || results.ValueKind != JsonValueKind.Array ||
-            results.GetArrayLength() == 0) return null;
-        var result = results[0];
-        if (result.ValueKind != JsonValueKind.Object ||
-            !result.TryGetProperty("formatted_address", out var formattedAddress) ||
-            formattedAddress.ValueKind != JsonValueKind.String ||
-            !result.TryGetProperty("geometry", out var geometry) ||
-            geometry.ValueKind != JsonValueKind.Object ||
-            !geometry.TryGetProperty("location", out var location) ||
-            location.ValueKind != JsonValueKind.Object ||
-            !location.TryGetProperty("lat", out var latitude) || !latitude.TryGetDouble(out var lat) ||
-            !location.TryGetProperty("lng", out var longitude) || !longitude.TryGetDouble(out var lng))
-            throw new MatchingFailureException(502, "goong_geocode_invalid", "The address provider returned an invalid result.");
-        MatchingCoordinator.ValidateCoordinate(lat, lng);
-        var placeId = result.TryGetProperty("place_id", out var id) ? id.GetString() : null;
-        return new GeocodedAddress(formattedAddress.GetString() ?? address, lat, lng, placeId);
+        if (!root.TryGetProperty("predictions", out var predictions) || predictions.ValueKind != JsonValueKind.Array)
+            throw new MatchingFailureException(502, "goong_places_invalid", "The place provider returned invalid results.");
+
+        var suggestions = new List<PlaceSuggestion>(predictions.GetArrayLength());
+        foreach (var prediction in predictions.EnumerateArray())
+        {
+            if (prediction.ValueKind != JsonValueKind.Object ||
+                !prediction.TryGetProperty("description", out var description) ||
+                description.ValueKind != JsonValueKind.String ||
+                !prediction.TryGetProperty("place_id", out var placeId) ||
+                placeId.ValueKind != JsonValueKind.String)
+                throw new MatchingFailureException(502, "goong_places_invalid", "The place provider returned an invalid result.");
+            suggestions.Add(new PlaceSuggestion(description.GetString()!, placeId.GetString()!));
+        }
+        return suggestions;
     }
 
     private async Task<JsonDocument> GetDocumentAsync(string uri, CancellationToken ct)
@@ -106,6 +122,32 @@ public sealed class GoongClient(HttpClient client, IConfiguration configuration,
             throw new MatchingFailureException(503, "goong_not_configured", "Address and routing lookup is not configured.");
         parameters["api_key"] = key;
         return QueryHelpers.AddQueryString(endpoint, parameters);
+    }
+
+    private static GeocodedAddress? ParseGeocodedAddress(JsonElement root)
+    {
+        if (root.ValueKind != JsonValueKind.Object)
+            throw new MatchingFailureException(502, "goong_response_invalid", "The address provider returned an invalid response.");
+        var status = GetStatus(root);
+        if (status == "ZERO_RESULTS") return null;
+        EnsureSuccessfulStatus(status);
+        if (!root.TryGetProperty("results", out var results) || results.ValueKind != JsonValueKind.Array)
+            throw new MatchingFailureException(502, "goong_geocode_invalid", "The address provider returned invalid results.");
+        if (results.GetArrayLength() == 0) return null;
+        var result = results[0];
+        if (result.ValueKind != JsonValueKind.Object ||
+            !result.TryGetProperty("formatted_address", out var formattedAddress) ||
+            formattedAddress.ValueKind != JsonValueKind.String ||
+            !result.TryGetProperty("geometry", out var geometry) ||
+            geometry.ValueKind != JsonValueKind.Object ||
+            !geometry.TryGetProperty("location", out var location) ||
+            location.ValueKind != JsonValueKind.Object ||
+            !location.TryGetProperty("lat", out var latitude) || !latitude.TryGetDouble(out var lat) ||
+            !location.TryGetProperty("lng", out var longitude) || !longitude.TryGetDouble(out var lng))
+            throw new MatchingFailureException(502, "goong_geocode_invalid", "The address provider returned an invalid result.");
+        MatchingCoordinator.ValidateCoordinate(lat, lng);
+        var placeId = result.TryGetProperty("place_id", out var id) ? id.GetString() : null;
+        return new GeocodedAddress(formattedAddress.GetString()!, lat, lng, placeId);
     }
 
     private static string Coordinate(double latitude, double longitude) =>

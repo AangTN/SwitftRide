@@ -26,6 +26,10 @@ builder.Services.AddOptions<PricingOptions>()
         options.Surge > 0 && options.PromotionFactor > 0 && options.TaxRate is >= 0 and <= 1,
         "Pricing rates must be non-negative and factors must be positive.")
     .ValidateOnStart();
+builder.Services.AddSingleton<IStandardFareStrategy, StandardFareStrategy>();
+builder.Services.AddSingleton<ISurgeFareStrategy, SurgeFareStrategy>();
+builder.Services.AddSingleton<IPromotionFareStrategy, PromotionFareStrategy>();
+builder.Services.AddScoped<FareCalculator>();
 builder.Services.AddSingleton(sp => sp.GetRequiredService<Microsoft.Extensions.Options.IOptions<MatchingOptions>>().Value);
 builder.Services.AddSingleton(sp => sp.GetRequiredService<Microsoft.Extensions.Options.IOptions<PricingOptions>>().Value);
 builder.Services.AddHttpClient<IGoongClient, GoongClient>(client =>
