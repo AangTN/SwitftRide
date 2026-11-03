@@ -1,17 +1,18 @@
 using MassTransit;
 using SwiftRide.Contracts.Trips;
 using SwiftRide.Trip.Domain;
+using TripEntity = SwiftRide.Trip.Domain.Trip;
 
 namespace SwiftRide.Trip.Api;
 
 public interface ITripPaymentNotifier
 {
-    Task RequestAsync(Trip trip, CancellationToken ct);
+    Task RequestAsync(TripEntity trip, CancellationToken ct);
 }
 
 public sealed class TripPaymentNotifier(IPublishEndpoint bus) : ITripPaymentNotifier
 {
-    public Task RequestAsync(Trip trip, CancellationToken ct)
+    public Task RequestAsync(TripEntity trip, CancellationToken ct)
     {
         if (trip.PaymentId is null || trip.DriverId is null || trip.AgreedAmount is null)
             throw new InvalidOperationException("A completed trip must have payment, driver, and agreed amount snapshots.");
@@ -21,5 +22,5 @@ public sealed class TripPaymentNotifier(IPublishEndpoint bus) : ITripPaymentNoti
 
 public sealed class NoopTripPaymentNotifier : ITripPaymentNotifier
 {
-    public Task RequestAsync(Trip trip, CancellationToken ct) => Task.CompletedTask;
+    public Task RequestAsync(TripEntity trip, CancellationToken ct) => Task.CompletedTask;
 }

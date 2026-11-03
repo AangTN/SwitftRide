@@ -1,19 +1,20 @@
 using MassTransit;
 using SwiftRide.Contracts.Trips;
 using SwiftRide.Trip.Domain;
+using TripEntity = SwiftRide.Trip.Domain.Trip;
 
 namespace SwiftRide.Trip.Api;
 
 public interface ITripMatchingNotifier
 {
-    Task RequestOpenProposalsAsync(Trip trip, CancellationToken ct);
+    Task RequestOpenProposalsAsync(TripEntity trip, CancellationToken ct);
     Task ReleaseAsync(TripProposal proposal, string reason, CancellationToken ct);
 }
 
 /// <summary>Publishes only after the Trip transaction commits. Matching treats ProposalId as an idempotency key.</summary>
 public sealed class TripMatchingNotifier(IPublishEndpoint bus) : ITripMatchingNotifier
 {
-    public Task RequestOpenProposalsAsync(Trip trip, CancellationToken ct)
+    public Task RequestOpenProposalsAsync(TripEntity trip, CancellationToken ct)
     {
         var excluded = trip.Proposals.Where(x => x.DriverId is not null).Select(x => x.DriverId!.Value).ToArray();
         return Task.WhenAll(trip.Proposals.Where(x => x.Status == ProposalStatus.Searching)
@@ -27,6 +28,6 @@ public sealed class TripMatchingNotifier(IPublishEndpoint bus) : ITripMatchingNo
 
 public sealed class NoopTripMatchingNotifier : ITripMatchingNotifier
 {
-    public Task RequestOpenProposalsAsync(Trip trip, CancellationToken ct) => Task.CompletedTask;
+    public Task RequestOpenProposalsAsync(TripEntity trip, CancellationToken ct) => Task.CompletedTask;
     public Task ReleaseAsync(TripProposal proposal, string reason, CancellationToken ct) => Task.CompletedTask;
 }
