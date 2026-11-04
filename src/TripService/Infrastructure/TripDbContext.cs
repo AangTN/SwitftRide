@@ -28,6 +28,8 @@ public sealed class TripDbContext(DbContextOptions<TripDbContext> options) : DbC
             e.HasKey(x => x.Id);
             e.Property(x => x.Status).HasConversion<string>().HasMaxLength(30);
             e.Property(x => x.IdempotencyKey).HasMaxLength(100);
+            e.Property(x => x.RiderNameSnapshot).HasMaxLength(150);
+            e.Property(x => x.RiderPhoneSnapshot).HasMaxLength(16);
             e.Property(x => x.StateVersion).IsConcurrencyToken();
             e.Property(x => x.AgreedAmount).HasPrecision(18, 2);
             e.Property(x => x.Currency).HasMaxLength(3);

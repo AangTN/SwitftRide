@@ -55,6 +55,7 @@ public sealed class TripMatchingResultHandler(TripDbContext db, ITripRealtimePub
             proposal.Status = ProposalStatus.NoDriverFound;
             proposal.ResolvedAt = clock.GetUtcNow();
             TripStateMachine.Move(trip, TripStatus.Failed, null, clock.GetUtcNow(), result.FailureCode ?? "no_driver_available");
+            TripRouting.EnqueueCleanup(db, trip, clock.GetUtcNow());
             await db.SaveChangesAsync(ct);
             await realtime.PublishTripChangedAsync(trip, ct);
             return true;
@@ -68,6 +69,15 @@ public sealed class TripMatchingResultHandler(TripDbContext db, ITripRealtimePub
         proposal.DriverId = candidate.DriverId; proposal.QuoteId = candidate.QuoteId; proposal.Amount = candidate.Amount; proposal.Currency = candidate.Currency;
         proposal.DriverNameSnapshot = candidate.DriverName; proposal.PlateNumberSnapshot = candidate.PlateNumber; proposal.VehicleNameSnapshot = candidate.VehicleName; proposal.VehicleImageKeySnapshot = candidate.VehicleImageKey;
         proposal.DriverAvatarImageKeySnapshot = candidate.DriverAvatarImageKey;
+        if (candidate.Fare is { } fare)
+        {
+            proposal.DistanceMeters = fare.DistanceMeters;
+            proposal.EstimatedDurationSeconds = fare.DurationSeconds;
+            proposal.PricingSnapshotJson = System.Text.Json.JsonSerializer.Serialize(new
+            {
+                fare.PerKilometer, fare.PerMinute, fare.Surge, fare.Toll, fare.PromotionFactor, fare.TaxRate
+            });
+        }
         proposal.Status = ProposalStatus.AwaitingRiderApproval; proposal.RiderApprovalDeadline = now.AddSeconds(workflow.Value.RiderApprovalSeconds);
         TripStateMachine.Move(trip, TripStatus.AwaitingRiderApproval, null, now, "matching_candidate_offered");
         await db.SaveChangesAsync(ct); await realtime.PublishTripChangedAsync(trip, ct);

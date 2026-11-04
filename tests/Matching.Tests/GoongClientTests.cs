@@ -48,7 +48,7 @@ public sealed class GoongClientTests
             Assert.Equal(expectedProviderVehicle, query["vehicle"]);
             Assert.Equal("10.759,106.682", query["origin"]);
             return JsonResponse("""
-                {"routes":[{"legs":[{"distance":{"value":4800},"duration":{"value":900},
+                {"routes":[{"overview_polyline":{"points":"encoded-route"},"legs":[{"distance":{"value":4800},"duration":{"value":900},
                 "start_address":"Chợ Quán, Hồ Chí Minh","end_address":"Bến Thành, Hồ Chí Minh"}]}]}
                 """);
         });
@@ -57,6 +57,7 @@ public sealed class GoongClientTests
             var route = await client.GetRouteAsync(10.759, 106.682, 10.7725, 106.698, vehicle, default);
             Assert.Equal(4800, route.DistanceMeters);
             Assert.Equal(900, route.DurationSeconds);
+            Assert.Equal("encoded-route", route.Polyline);
         }
     }
 

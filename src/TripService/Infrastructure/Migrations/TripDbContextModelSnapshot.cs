@@ -137,6 +137,16 @@ namespace SwiftRide.Trip.Infrastructure.Migrations
                         .HasColumnType("uniqueidentifier")
                         .HasColumnName("rider_id");
 
+                    b.Property<string>("RiderNameSnapshot")
+                        .HasMaxLength(150)
+                        .HasColumnType("nvarchar(150)")
+                        .HasColumnName("rider_name_snapshot");
+
+                    b.Property<string>("RiderPhoneSnapshot")
+                        .HasMaxLength(16)
+                        .HasColumnType("nvarchar(16)")
+                        .HasColumnName("rider_phone_snapshot");
+
                     b.Property<int>("StateVersion")
                         .IsConcurrencyToken()
                         .HasColumnType("int")
@@ -205,6 +215,10 @@ namespace SwiftRide.Trip.Infrastructure.Migrations
                         .HasColumnType("nvarchar(3)")
                         .HasColumnName("currency");
 
+                    b.Property<double?>("DistanceMeters")
+                        .HasColumnType("float")
+                        .HasColumnName("distance_meters");
+
                     b.Property<string>("DriverAvatarImageKeySnapshot")
                         .HasMaxLength(500)
                         .HasColumnType("nvarchar(500)")
@@ -223,10 +237,18 @@ namespace SwiftRide.Trip.Infrastructure.Migrations
                         .HasColumnType("datetimeoffset")
                         .HasColumnName("driver_response_deadline");
 
+                    b.Property<int?>("EstimatedDurationSeconds")
+                        .HasColumnType("int")
+                        .HasColumnName("estimated_duration_seconds");
+
                     b.Property<string>("PlateNumberSnapshot")
                         .HasMaxLength(20)
                         .HasColumnType("nvarchar(20)")
                         .HasColumnName("plate_number_snapshot");
+
+                    b.Property<string>("PricingSnapshotJson")
+                        .HasColumnType("nvarchar(max)")
+                        .HasColumnName("pricing_snapshot_json");
 
                     b.Property<string>("QuoteId")
                         .HasMaxLength(100)

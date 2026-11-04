@@ -21,8 +21,84 @@ public sealed class MongoFactAttribute : FactAttribute
     }
 }
 
+public sealed class RedisMongoFactAttribute : FactAttribute
+{
+    public RedisMongoFactAttribute()
+    {
+        if (string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable("SWIFTRIDE_TEST_REDIS")) ||
+            string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable("SWIFTRIDE_TEST_MONGO")))
+            Skip = "Set SWIFTRIDE_TEST_MONGO and SWIFTRIDE_TEST_REDIS to isolated test servers.";
+    }
+}
+
 public sealed class MatchingIntegrationTests
 {
+    [RedisMongoFact]
+    public async Task Accepted_trip_reuses_quote_route_and_switches_stage_without_reusing_stale_commands()
+    {
+        await using var f = await Fixture.Create();
+        var request = f.Request();
+        var tripId = request.TripId;
+        var proposalId = request.ProposalId;
+        await f.Reserve(tripId, proposalId);
+        var configuration = new Microsoft.Extensions.Configuration.ConfigurationManager();
+        configuration["ConnectionStrings:RouteCache"] = Environment.GetEnvironmentVariable("SWIFTRIDE_TEST_REDIS");
+        await using var cache = new MatchingRouteCache(configuration,
+            Microsoft.Extensions.Logging.Abstractions.NullLogger<MatchingRouteCache>.Instance);
+        using var progress = new Microsoft.Extensions.Caching.Memory.MemoryCache(new Microsoft.Extensions.Caching.Memory.MemoryCacheOptions());
+        var bus = DispatchProxy.Create<IPublishEndpoint, Transport>();
+        var routes = new MatchingRoutes(f.Db, f.Goong, cache, new MatchingRouteLocks(), progress, bus);
+        await routes.GetQuoteRouteAsync(new FareQuoteRequest(tripId, proposalId, 10.78, 106.69, 10.79, 106.70), default);
+        await routes.PrepareOfferPickupAsync(request, f.Driver, default);
+        await routes.PrepareOfferPickupAsync(request, f.Driver, default);
+        var preview = await routes.ReadPreviewAsync(new GetTripRoutePreview(tripId, proposalId), default);
+        Assert.NotNull(preview.ToDestination);
+        Assert.Equal(2, preview.PickupEtaMinutes);
+        Assert.Equal(2, f.Goong.Calls);
+        Assert.True(await f.Db.ConfirmReservationAsync(f.Driver, tripId.ToString(), proposalId.ToString(), DateTime.UtcNow, default));
+
+        var toPickup = new TripRouteRequested(tripId, proposalId, Guid.Parse(f.Driver), 1, TripRouteStage.ToPickup,
+            10.78, 106.69, 10.79, 106.70, "Motorbike");
+        var prepared = await routes.PrepareAsync(toPickup, default);
+        Assert.NotNull(prepared.ToPickup);
+        Assert.NotNull(prepared.ToDestination);
+        Assert.Equal(preview.PickupEtaMinutes, prepared.PickupEtaMinutes);
+        Assert.Equal(2, f.Goong.Calls);
+
+        var pickedUp = await routes.PrepareAsync(toPickup with { Stage = TripRouteStage.ToDestination, StageVersion = 2 }, default);
+        Assert.NotNull(pickedUp.ToDestination);
+        Assert.Equal(2, f.Goong.Calls);
+        var stale = await routes.PrepareAsync(toPickup, default);
+        Assert.Null(stale.ToPickup);
+        Assert.Null(stale.ToDestination);
+
+        await using var redis = await StackExchange.Redis.ConnectionMultiplexer.ConnectAsync(
+            configuration["ConnectionStrings:RouteCache"]!);
+        var redisDb = redis.GetDatabase();
+        var activeKey = MatchingRouteCache.Key(tripId, TripRouteStage.ToDestination);
+        Assert.True(await redisDb.KeyExpireAsync(activeKey, TimeSpan.FromSeconds(30)));
+
+        var start = DateTime.UtcNow;
+        for (var i = 0; i < 3; i++)
+        {
+            var time = start.AddSeconds(i);
+            await f.Db.UpdateGpsAsync(f.Driver, new DriverGpsRequest(10.785, 106.695), time, default);
+            await routes.TrackAsync(new DriverGpsUpdated(tripId, proposalId, Guid.Parse(f.Driver),
+                10.785, 106.695, time), default);
+            Assert.Equal(i < 2 ? 2 : 3, f.Goong.Calls);
+            Assert.True(await redisDb.KeyTimeToLiveAsync(activeKey) > TimeSpan.FromMinutes(59));
+        }
+
+        var reroute = Assert.Single(((Transport)bus).Routes);
+        Assert.Equal(TripRouteStage.ToDestination, reroute.Stage);
+        Assert.Null(reroute.ToPickup);
+        Assert.NotNull(reroute.ToDestination);
+
+        await routes.CleanAsync(tripId, default);
+        Assert.Null(await cache.ReadAsync(MatchingRouteCache.Key(tripId, TripRouteStage.ToPickup), default));
+        Assert.Null(await cache.ReadAsync(MatchingRouteCache.Key(tripId, TripRouteStage.ToDestination), default));
+    }
+
     [MongoFact]
     public async Task Avatar_upgrade_fills_missing_field_without_overwriting_existing_avatars()
     {
@@ -153,7 +229,7 @@ public sealed class MatchingIntegrationTests
         Assert.True((await f.Jobs.ReloadAsync(job.Id, default)).ResultSent);
         await f.Jobs.EnqueueAsync(request, default);
         Assert.False(await f.Dispatcher.DispatchOneAsync(default));
-        Assert.Equal(1, f.Goong.Calls);
+        Assert.Equal(2, f.Goong.Calls);
         Assert.Equal("avatars/test.webp", Assert.Single(f.Transport.Messages).Candidate!.DriverAvatarImageKey);
     }
 
@@ -242,10 +318,12 @@ public sealed class MatchingIntegrationTests
     {
         public bool Fail { get; set; }
         public List<TripMatchingResult> Messages { get; } = [];
+        public List<TripRoutesUpdated> Routes { get; } = [];
         protected override object? Invoke(MethodInfo? targetMethod, object?[]? args)
         {
             if (Fail) return Task.FromException(new IOException("Test broker unavailable"));
             if (args?[0] is TripMatchingResult result) Messages.Add(result);
+            if (args?[0] is TripRoutesUpdated routes) Routes.Add(routes);
             return Task.CompletedTask;
         }
     }
@@ -259,7 +337,7 @@ public sealed class MatchingIntegrationTests
         {
             Calls++;
             if (Calls <= Failures) throw new MatchingFailureException(502, "route_unavailable", "Test route failure");
-            return Task.FromResult(new RouteMetrics(1000, 120));
+            return Task.FromResult(new RouteMetrics(1000, 120, "_p~iF~ps|U_ulLnnqC_mqNvxq`@"));
         }
         public Task<GeocodedAddress?> GeocodeAsync(string address, CancellationToken ct) => throw new NotSupportedException();
         public Task<GeocodedAddress?> ReverseGeocodeAsync(double latitude, double longitude, CancellationToken ct) => throw new NotSupportedException();
@@ -286,7 +364,12 @@ public sealed class MatchingIntegrationTests
         }
         public MatchingJobDispatcher CreateDispatcher(IPublishEndpoint bus) => new(Jobs, new MatchingCoordinator(Db, Db, Goong,
                 new FareCalculator(new StandardFareStrategy(), new SurgeFareStrategy(), new PromotionFareStrategy()),
-                new MatchingOptions(), new PricingOptions()), Db, bus);
+                new MatchingOptions(), new PricingOptions()), Db, bus,
+                new MatchingRoutes(Db, Goong, new MatchingRouteCache(
+                    new Microsoft.Extensions.Configuration.ConfigurationBuilder().Build(),
+                    Microsoft.Extensions.Logging.Abstractions.NullLogger<MatchingRouteCache>.Instance),
+                    new MatchingRouteLocks(), new Microsoft.Extensions.Caching.Memory.MemoryCache(
+                        new Microsoft.Extensions.Caching.Memory.MemoryCacheOptions()), bus));
         public static async Task<Fixture> Create()
         {
             var f = new Fixture();

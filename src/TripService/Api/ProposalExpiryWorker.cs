@@ -32,13 +32,7 @@ public sealed class ProposalExpiryWorker(IServiceScopeFactory scopes, TimeProvid
             if (driverTimedOut.Count != 0)
             {
                 foreach (var proposal in driverTimedOut) { proposal.Status = ProposalStatus.DriverTimedOut; proposal.ResolvedAt = now; releases.Add((proposal, "driver_response_timeout")); }
-                if (trip.Proposals.Count(p => p.DriverId is not null) >= workflow.Value.MaxDriverAttempts)
-                    TripStateMachine.Move(trip, TripStatus.Failed, null, now, "driver_attempt_limit_reached");
-                else
-                {
-                    TripStateMachine.Move(trip, TripStatus.Matching, null, now, "driver_response_timeout");
-                    trip.Proposals.Add(new TripProposal { TripId = trip.Id, CreatedAt = now, Status = ProposalStatus.Searching });
-                }
+                TripProposalRetry.Advance(trip, workflow.Value.MaxDriverAttempts, null, now, "driver_response_timeout");
                 continue;
             }
             foreach (var proposal in trip.Proposals.Where(p => p.Status == ProposalStatus.AwaitingRiderApproval && p.RiderApprovalDeadline <= now)) { proposal.Status = ProposalStatus.RiderTimedOut; proposal.ResolvedAt = now; releases.Add((proposal, "rider_approval_timeout")); }
@@ -46,7 +40,11 @@ public sealed class ProposalExpiryWorker(IServiceScopeFactory scopes, TimeProvid
         }
         if (trips.Count == 0) return;
         foreach (var release in releases) await matching.ReleaseAsync(release.Proposal, release.Reason, ct);
-        foreach (var trip in trips) await matching.RequestOpenProposalsAsync(trip, ct);
+        foreach (var trip in trips)
+        {
+            await matching.RequestOpenProposalsAsync(trip, ct);
+            if (trip.Status is TripStatus.Failed or TripStatus.Cancelled) TripRouting.EnqueueCleanup(db, trip, now);
+        }
         await db.SaveChangesAsync(ct);
         foreach (var trip in trips) await realtime.PublishTripChangedAsync(trip, ct);
     }

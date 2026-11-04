@@ -7,7 +7,7 @@ public static class TripStateMachine
     {
         [TripStatus.Requested] = new(TripStatus.Matching, TripStatus.Cancelled, TripStatus.Failed),
         [TripStatus.Matching] = new(TripStatus.AwaitingRiderApproval, TripStatus.Cancelled, TripStatus.Failed),
-        [TripStatus.AwaitingRiderApproval] = new(TripStatus.AwaitingDriverResponse, TripStatus.Cancelled),
+        [TripStatus.AwaitingRiderApproval] = new(TripStatus.AwaitingDriverResponse, TripStatus.Cancelled, TripStatus.Matching, TripStatus.Failed),
         [TripStatus.AwaitingDriverResponse] = new(TripStatus.Matching, TripStatus.DriverAccepted, TripStatus.Cancelled, TripStatus.Failed),
         [TripStatus.DriverAccepted] = new(TripStatus.EnRoute, TripStatus.Cancelled),
         [TripStatus.EnRoute] = new(TripStatus.PickedUp, TripStatus.Cancelled),

@@ -125,6 +125,7 @@ services:
     command: [SwiftRide.Trip.Api.dll]
     environment:
       <<: *api-environment
+      Auth__BaseUrl: http://auth:8080/
       ConnectionStrings__TripDb: Server=sqlserver;Database=TripDB;User Id=trip_app;Password=${TRIP_DB_PASSWORD};TrustServerCertificate=True
     ports: ["127.0.0.1:5102:8080"]
     volumes: ["./.secrets/auth-public.pem:/run/keys/auth-public.pem:ro"]
@@ -132,8 +133,15 @@ services:
       sqlserver-init: {condition: service_completed_successfully}
       rabbitmq: {condition: service_healthy}
 
+  redis:
+    image: redis:7-alpine
+    networks: [route-cache]
+    command: ["redis-server", "--save", "", "--appendonly", "no", "--maxmemory", "64mb", "--maxmemory-policy", "allkeys-lru"]
+    restart: unless-stopped
+
   matching:
     <<: *api-common
+    networks: [backend, route-cache]
     build:
       context: .
       args: {PROJECT: src/MatchingService/Api/SwiftRide.Matching.Api.csproj}
@@ -142,6 +150,7 @@ services:
       <<: *api-environment
       ConnectionStrings__MatchingDb: mongodb://matching_app:${MATCHING_DB_PASSWORD}@mongo:27017/MatchingDB?authSource=MatchingDB
       Seed__Enabled: "true"
+      ConnectionStrings__RouteCache: redis:6379
       Goong__ApiKey: ${GOONG_API_KEY:-}
     ports: ["127.0.0.1:5103:8080"]
     volumes: ["./.secrets/auth-public.pem:/run/keys/auth-public.pem:ro"]
@@ -188,6 +197,8 @@ services:
       payment: {condition: service_healthy}
 
 networks:
+  route-cache:
+    internal: true
   backend:
     ipam:
       config: [{subnet: 172.29.0.0/24}]

@@ -1,7 +1,5 @@
 using MongoDB.Bson;
-using MongoDB.Bson.Serialization;
 using MongoDB.Bson.Serialization.Conventions;
-using MongoDB.Bson.Serialization.Serializers;
 using MongoDB.Driver;
 using SwiftRide.Matching.Domain;
 using SwiftRide.Matching.Application;
@@ -14,23 +12,12 @@ public sealed class MatchingDatabase : IDriverProfileReader, IMatchingStore
     {
         ConventionRegistry.Register("matching-camel-case", new ConventionPack { new CamelCaseElementNameConvention() },
             t => t.Namespace == "SwiftRide.Matching.Domain");
-        BsonClassMap.RegisterClassMap<FareQuote>(m =>
-        {
-            m.AutoMap(); m.MapMember(x => x.TotalAmount).SetSerializer(new DecimalSerializer(BsonType.Decimal128));
-        });
-        BsonClassMap.RegisterClassMap<PricingSnapshot>(m =>
-        {
-            m.AutoMap();
-            foreach (var member in m.DeclaredMemberMaps.Where(x => x.MemberType == typeof(decimal)))
-                member.SetSerializer(new DecimalSerializer(BsonType.Decimal128));
-        });
     }
     public IMongoDatabase Database { get; }
     public IMongoCollection<DriverAvailability> Drivers => Database.GetCollection<DriverAvailability>("driver_availability");
     public IMongoCollection<DriverProfile> Profiles => Database.GetCollection<DriverProfile>("driver_profiles");
     public async Task<DriverProfile?> FindAsync(string userId, CancellationToken ct) =>
         await Profiles.Find(x => x.Id == userId).SingleOrDefaultAsync(ct);
-    public IMongoCollection<FareQuote> Quotes => Database.GetCollection<FareQuote>("fare_quotes");
     public MatchingDatabase(IMongoClient client, string name) => Database = client.GetDatabase(name);
 
     public Task<DriverAvailability?> UpdateGpsAsync(string driverId, DriverGpsRequest gps, DateTime now, CancellationToken ct) =>
@@ -58,6 +45,7 @@ public sealed class MatchingDatabase : IDriverProfileReader, IMatchingStore
             change = change
                 .Set(x => x.CurrentTripId, null)
                 .Set(x => x.CurrentProposalId, null)
+            .Unset(x => x.ActiveRouteJson).Unset(x => x.RouteStageVersion)
                 .Set(x => x.ReservedUntil, null);
         try
         {
@@ -170,27 +158,11 @@ public sealed class MatchingDatabase : IDriverProfileReader, IMatchingStore
             .Set(x => x.Status, "Available")
             .Set(x => x.CurrentTripId, null)
             .Set(x => x.CurrentProposalId, null)
+                .Unset(x => x.ActiveRouteJson).Unset(x => x.RouteStageVersion)
             .Set(x => x.ReservedUntil, null)
             .Set(x => x.UpdatedAt, now);
         var result = await Drivers.UpdateOneAsync(filter, update, cancellationToken: ct);
         return result.ModifiedCount == 1;
-    }
-
-    public async Task<FareQuote> SaveQuoteAsync(FareQuote quote, CancellationToken ct)
-    {
-        var existing = await Quotes.Find(x => x.ProposalId == quote.ProposalId).SingleOrDefaultAsync(ct);
-        if (existing is not null) return existing;
-        try
-        {
-            await Quotes.InsertOneAsync(quote, cancellationToken: ct);
-            return quote;
-        }
-        catch (MongoWriteException exception) when (exception.WriteError?.Code == 11000)
-        {
-            existing = await Quotes.Find(x => x.ProposalId == quote.ProposalId).SingleOrDefaultAsync(ct);
-            if (existing is null) throw;
-            return existing;
-        }
     }
 
     public async Task InitializeAsync(bool seed, CancellationToken ct = default)
@@ -222,16 +194,6 @@ public sealed class MatchingDatabase : IDriverProfileReader, IMatchingStore
                 Unique = true,
                 PartialFilterExpression = new BsonDocument("currentTripId", new BsonDocument("$type", "string"))
             }), cancellationToken: ct);
-        await Quotes.Indexes.CreateOneAsync(new CreateIndexModel<FareQuote>(Builders<FareQuote>.IndexKeys.Ascending(x => x.TripId)), cancellationToken: ct);
-        await Quotes.Indexes.CreateOneAsync(new CreateIndexModel<FareQuote>(
-            Builders<FareQuote>.IndexKeys.Ascending(x => x.ProposalId),
-            new CreateIndexOptions<FareQuote>
-            {
-                Unique = true,
-                PartialFilterExpression = new BsonDocument("proposalId", new BsonDocument("$type", "string"))
-            }), cancellationToken: ct);
-        // Keep expired quotes for history; expiresAt is checked by future quote acceptance logic, not a TTL index.
-        await Quotes.Indexes.CreateOneAsync(new CreateIndexModel<FareQuote>(Builders<FareQuote>.IndexKeys.Ascending(x => x.ExpiresAt)), cancellationToken: ct);
         if (seed)
         {
             // Never overwrite migrated/verified identity or vehicle information on restart.

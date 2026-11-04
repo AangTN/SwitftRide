@@ -22,6 +22,8 @@ public sealed class DriverAvailability
     public DateTime? LocationUpdatedAt { get; set; }
     public string? CurrentTripId { get; set; }
     public string? CurrentProposalId { get; set; }
+    public string? ActiveRouteJson { get; set; }
+    public int RouteStageVersion { get; set; }
     public DateTime? ReservedUntil { get; set; }
     public DateTime UpdatedAt { get; set; }
 }

@@ -9,14 +9,19 @@ using SwiftRide.Matching.Api;
 var builder = WebApplication.CreateBuilder(args);
 builder.Services.AddServiceDefaults(builder.Configuration, builder.Environment.IsDevelopment(), configureBus: x =>
 {
+    x.AddConsumer<MatchingRouteConsumer>(c => c.UseMessageRetry(r => r.Interval(3, TimeSpan.FromMilliseconds(500))));
     x.AddConsumer<TripMatchingRequestedConsumer>(c => c.UseMessageRetry(r => r.Interval(3, TimeSpan.FromMilliseconds(200))));
     x.AddConsumer<DriverReservationConfirmedConsumer>(c => c.UseMessageRetry(r => r.Interval(3, TimeSpan.FromMilliseconds(200))));
     x.AddConsumer<DriverReservationReleaseConsumer>(c => c.UseMessageRetry(r => r.Interval(3, TimeSpan.FromMilliseconds(200))));
 });
 builder.Services.AddSingleton<MatchingJobStore>();
+builder.Services.AddMemoryCache();
+builder.Services.AddSingleton<MatchingRouteCache>();
+builder.Services.AddSingleton<MatchingRouteLocks>();
 builder.Services.Configure<MassTransitHostOptions>(x => x.WaitUntilStarted = false);
 if (builder.Configuration.GetValue("RabbitMq:Enabled", true))
 {
+    builder.Services.AddScoped<MatchingRoutes>();
     builder.Services.AddScoped<MatchingJobDispatcher>();
     builder.Services.AddHostedService<MatchingJobWorker>();
 }

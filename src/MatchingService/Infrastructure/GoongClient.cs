@@ -41,7 +41,10 @@ public sealed class GoongClient(HttpClient client, IConfiguration configuration,
             duration.ValueKind != JsonValueKind.Object ||
             !duration.TryGetProperty("value", out var durationValue) || !durationValue.TryGetInt32(out var seconds))
             throw new MatchingFailureException(502, "goong_route_invalid", "The route provider returned invalid route metrics.");
-        return new RouteMetrics(meters, seconds);
+        var polyline = routes[0].TryGetProperty("overview_polyline", out var overview) &&
+            overview.ValueKind == JsonValueKind.Object && overview.TryGetProperty("points", out var points) &&
+            points.ValueKind == JsonValueKind.String ? points.GetString() : null;
+        return new RouteMetrics(meters, seconds, polyline);
     }
 
     public async Task<GeocodedAddress?> GeocodeAsync(string address, CancellationToken ct)

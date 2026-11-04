@@ -1,4 +1,5 @@
 using System.Security.Claims;
+using SwiftRide.Contracts.Trips;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
@@ -10,6 +11,7 @@ using TripEntity = SwiftRide.Trip.Domain.Trip;
 namespace SwiftRide.Trip.Api;
 
 [ApiController, Route("api/trips"), Authorize, TypeFilter(typeof(TripExceptionFilter))]
+[ResponseCache(NoStore = true, Location = ResponseCacheLocation.None)]
 public sealed class TripsController(TripDbContext db, ITripRealtimePublisher realtime, ITripMatchingNotifier matching, ITripPaymentNotifier payment, TimeProvider clock, IOptions<TripWorkflowOptions> workflow) : ControllerBase
 {
     [HttpPost]
@@ -22,10 +24,12 @@ public sealed class TripsController(TripDbContext db, ITripRealtimePublisher rea
         if (string.IsNullOrWhiteSpace(idempotencyKey)) throw Failure(400, "idempotency_key_required", "Idempotency-Key is required.");
         var existing = await db.Trips.Include(x => x.Proposals).SingleOrDefaultAsync(x => x.RiderId == riderId && x.IdempotencyKey == idempotencyKey, ct);
         if (existing is not null) return Ok(Snapshot(existing));
+        var profile = await HttpContext.RequestServices.GetRequiredService<RiderProfileClient>()
+            .GetAsync(riderId, Request.Headers.Authorization.ToString(), ct);
         var now = clock.GetUtcNow();
         var trip = new TripEntity
         {
-            RiderId = riderId, IdempotencyKey = idempotencyKey, PickupAddress = request.PickupAddress,
+            RiderId = riderId, RiderNameSnapshot = profile.FullName, RiderPhoneSnapshot = profile.PhoneNumber, IdempotencyKey = idempotencyKey, PickupAddress = request.PickupAddress,
             PickupLatitude = request.PickupLatitude, PickupLongitude = request.PickupLongitude,
             DestinationAddress = request.DestinationAddress, DestinationLatitude = request.DestinationLatitude,
             DestinationLongitude = request.DestinationLongitude, VehicleType = request.VehicleType, CreatedAt = now, UpdatedAt = now
@@ -62,6 +66,66 @@ public sealed class TripsController(TripDbContext db, ITripRealtimePublisher rea
         return Ok(Snapshot(trip));
     }
 
+    [HttpGet("{tripId:guid}/route")]
+    [ResponseCache(NoStore = true, Location = ResponseCacheLocation.None)]
+    public async Task<IActionResult> RouteForTrip(Guid tripId, CancellationToken ct)
+    {
+        var trip = await LoadForUserOrDriverInvitation(tripId, ct);
+        var route = TripRouting.ActiveStage(trip);
+        if (route is null) return await RoutePreviewAsync(trip, ct);
+        var client = HttpContext.RequestServices.GetService<MassTransit.IRequestClient<SwiftRide.Contracts.Trips.GetTripRoutes>>();
+        if (client is null) throw Failure(503, "trip_route_unavailable", "The trip route is temporarily unavailable.");
+        try
+        {
+            var response = await client.GetResponse<SwiftRide.Contracts.Trips.TripRoutesUpdated>(
+                new SwiftRide.Contracts.Trips.GetTripRoutes(route), ct, MassTransit.RequestTimeout.After(s: 15));
+            var latest = await db.Trips.AsNoTracking().SingleAsync(x => x.Id == tripId, ct);
+            if (latest.DriverId != route.DriverId || !TripRouting.IsCurrentStage(latest.Status, route.Stage))
+                return NoContent();
+            var routes = response.Message;
+            return routes.ToPickup is null && routes.ToDestination is null ? NoContent() : Ok(routes);
+        }
+        catch (MassTransit.RequestException)
+        {
+            throw Failure(503, "trip_route_unavailable", "The trip route is temporarily unavailable.");
+        }
+    }
+
+    private async Task<IActionResult> RoutePreviewAsync(TripEntity trip, CancellationToken ct)
+    {
+        if (trip.Status is not (TripStatus.Matching or TripStatus.AwaitingRiderApproval or TripStatus.AwaitingDriverResponse))
+            return NoContent();
+        var proposal = trip.Proposals.SingleOrDefault(p => p.Status is ProposalStatus.Searching or
+            ProposalStatus.AwaitingRiderApproval or ProposalStatus.AwaitingDriverResponse);
+        if (proposal is null) return NoContent();
+        var userId = UserId();
+        if (trip.RiderId != userId &&
+            (trip.Status != TripStatus.AwaitingDriverResponse || proposal.DriverId != userId ||
+                proposal.Status != ProposalStatus.AwaitingDriverResponse || proposal.DriverResponseDeadline is null ||
+                proposal.DriverResponseDeadline <= clock.GetUtcNow()))
+            return NoContent();
+
+        var client = HttpContext.RequestServices.GetService<MassTransit.IRequestClient<GetTripRoutePreview>>();
+        if (client is null) return NoContent();
+        try
+        {
+            var response = await client.GetResponse<TripRoutePreview>(new GetTripRoutePreview(trip.Id, proposal.Id),
+                ct, MassTransit.RequestTimeout.After(s: 3));
+            var now = clock.GetUtcNow();
+            if ((response.Message.ToDestination is null && response.Message.PickupEtaMinutes is null) ||
+                !await db.Trips.WithRoutePreview(proposal.Id).AnyAsync(t => t.Id == trip.Id &&
+                    (t.RiderId == userId || (t.Status == TripStatus.AwaitingDriverResponse &&
+                        t.Proposals.Any(p => p.Id == proposal.Id && p.DriverId == userId &&
+                            p.Status == ProposalStatus.AwaitingDriverResponse && p.DriverResponseDeadline > now))), ct))
+                return NoContent();
+            return Ok(response.Message);
+        }
+        catch (MassTransit.RequestException)
+        {
+            return NoContent();
+        }
+    }
+
     [HttpGet("history")]
     public async Task<IActionResult> History([FromQuery] int page = 1, [FromQuery] int pageSize = 20, CancellationToken ct = default)
     {
@@ -69,7 +133,7 @@ public sealed class TripsController(TripDbContext db, ITripRealtimePublisher rea
         var query = db.Trips.Where(x => x.RiderId == user || x.DriverId == user).OrderByDescending(x => x.CreatedAt);
         var total = await query.CountAsync(ct);
         var items = await query.Skip((page - 1) * pageSize).Take(pageSize).Include(x => x.Proposals).ToListAsync(ct);
-        return Ok(new { page, pageSize, total, items = items.Select(Snapshot) });
+        return Ok(new { page, pageSize, total, items = items.Select(x => Snapshot(x)) });
     }
 
     [HttpPost("{tripId:guid}/proposals/{proposalId:guid}/approve")]
@@ -98,6 +162,7 @@ public sealed class TripsController(TripDbContext db, ITripRealtimePublisher rea
         await payment.RequestAsync(trip, ct);
         foreach (var proposal in trip.Proposals.Where(x => x.Status == ProposalStatus.DriverAccepted))
             await matching.ReleaseAsync(proposal, "trip_dropped_off", ct);
+        TripRouting.EnqueueCleanup(db, trip, now);
         await db.SaveChangesAsync(ct); await transaction.CommitAsync(ct);
         await realtime.PublishTripChangedAsync(trip, ct); await realtime.PublishRideCompletedAsync(trip, ct);
         return Ok(Snapshot(trip));
@@ -113,6 +178,7 @@ public sealed class TripsController(TripDbContext db, ITripRealtimePublisher rea
         TripStateMachine.Move(trip, TripStatus.Cancelled, UserId(), now, "cancelled_by_user");
         foreach (var proposal in trip.Proposals.Where(x => x.Status is ProposalStatus.AwaitingDriverResponse or ProposalStatus.AwaitingRiderApproval or ProposalStatus.Searching)) { proposal.Status = ProposalStatus.Cancelled; proposal.ResolvedAt = now; }
         foreach (var proposal in release) await matching.ReleaseAsync(proposal, "trip_cancelled", ct);
+        TripRouting.EnqueueCleanup(db, trip, now);
         await db.SaveChangesAsync(ct);
         await realtime.PublishTripChangedAsync(trip, ct); return Ok(Snapshot(trip));
     }
@@ -128,8 +194,13 @@ public sealed class TripsController(TripDbContext db, ITripRealtimePublisher rea
         if (proposal.Status != ProposalStatus.AwaitingRiderApproval || proposal.RiderApprovalDeadline <= clock.GetUtcNow()) throw Failure(409, "proposal_not_actionable", "Proposal is no longer awaiting the rider.");
         var now = clock.GetUtcNow(); proposal.Status = approve ? ProposalStatus.AwaitingDriverResponse : ProposalStatus.RiderRejected; proposal.ResolvedAt = now; proposal.RiderRespondedAt = now;
         if (approve) { proposal.DriverResponseDeadline = now.AddSeconds(workflow.Value.DriverResponseSeconds); TripStateMachine.Move(trip, TripStatus.AwaitingDriverResponse, UserId(), now, "rider_approved_quote"); }
-        else TripStateMachine.Move(trip, TripStatus.Cancelled, UserId(), now, "rider_rejected_quote");
-        if (!approve) await matching.ReleaseAsync(proposal, "rider_rejected_quote", ct);
+        else
+        {
+            TripProposalRetry.Advance(trip, workflow.Value.MaxDriverAttempts, UserId(), now, "rider_rejected_quote");
+            await matching.ReleaseAsync(proposal, "rider_rejected_quote", ct);
+            if (trip.Status == TripStatus.Failed) TripRouting.EnqueueCleanup(db, trip, now);
+            await matching.RequestOpenProposalsAsync(trip, ct);
+        }
         await db.SaveChangesAsync(ct);
         await realtime.PublishTripChangedAsync(trip, ct); if (approve) await realtime.PublishDriverInvitationAsync(trip, proposal, ct);
         return Ok(Snapshot(trip));
@@ -143,10 +214,14 @@ public sealed class TripsController(TripDbContext db, ITripRealtimePublisher rea
         if (proposal.Status != ProposalStatus.AwaitingDriverResponse || proposal.DriverResponseDeadline <= now) throw Failure(409, "proposal_expired", "The invitation is no longer active.");
         proposal.Status = accept ? ProposalStatus.DriverAccepted : ProposalStatus.DriverRejected; proposal.ResolvedAt = now;
         if (accept) { trip.DriverId = UserId(); trip.QuoteId = proposal.QuoteId; trip.AgreedAmount = proposal.Amount; trip.Currency = proposal.Currency; trip.DriverNameSnapshot = proposal.DriverNameSnapshot; trip.DriverAvatarImageKeySnapshot = proposal.DriverAvatarImageKeySnapshot; trip.PlateNumberSnapshot = proposal.PlateNumberSnapshot; trip.VehicleNameSnapshot = proposal.VehicleNameSnapshot; trip.VehicleImageKeySnapshot = proposal.VehicleImageKeySnapshot; trip.DriverAcceptedAt = now; TripStateMachine.Move(trip, TripStatus.DriverAccepted, UserId(), now); }
-        else if (trip.Proposals.Count(x => x.DriverId is not null) >= workflow.Value.MaxDriverAttempts) TripStateMachine.Move(trip, TripStatus.Failed, UserId(), now, "driver_attempt_limit_reached");
-        else { TripStateMachine.Move(trip, TripStatus.Matching, UserId(), now, "driver_rejected"); trip.Proposals.Add(new TripProposal { TripId = trip.Id, CreatedAt = now, Status = ProposalStatus.Searching }); }
+        else TripProposalRetry.Advance(trip, workflow.Value.MaxDriverAttempts, UserId(), now, "driver_rejected");
         if (!accept) { await matching.ReleaseAsync(proposal, "driver_rejected", ct); await matching.RequestOpenProposalsAsync(trip, ct); }
-        else await matching.ConfirmAsync(proposal, ct);
+        else
+        {
+            await matching.ConfirmAsync(proposal, ct);
+            TripRouting.EnqueueStage(db, trip, now);
+        }
+        if (trip.Status == TripStatus.Failed) TripRouting.EnqueueCleanup(db, trip, now);
         await db.SaveChangesAsync(ct);
         await realtime.PublishTripChangedAsync(trip, ct); return Ok(Snapshot(trip));
     }
@@ -154,7 +229,11 @@ public sealed class TripsController(TripDbContext db, ITripRealtimePublisher rea
     private async Task<IActionResult> DriverTransition(Guid tripId, VersionRequest request, TripStatus target, CancellationToken ct)
     {
         var trip = await DriverTrip(tripId, request.StateVersion, ct); var now = clock.GetUtcNow(); TripStateMachine.Move(trip, target, UserId(), now);
-        if (target == TripStatus.PickedUp) trip.PickedUpAt = now;
+        if (target == TripStatus.PickedUp)
+        {
+            trip.PickedUpAt = now;
+            TripRouting.EnqueueStage(db, trip, now);
+        }
         await db.SaveChangesAsync(ct); await realtime.PublishTripChangedAsync(trip, ct); return Ok(Snapshot(trip));
     }
 
@@ -171,7 +250,10 @@ public sealed class TripsController(TripDbContext db, ITripRealtimePublisher rea
     }
     private static void EnsureVersion(TripEntity trip, int version) { if (trip.StateVersion != version) throw Failure(409, "stale_trip_version", "Reload the trip before retrying."); }
     private static Exception Failure(int status, string code, string detail) => new SwiftRide.ServiceDefaults.ApiFailure(status, code, detail);
-    private static object Snapshot(TripEntity x) => new { x.Id, x.RiderId, x.DriverId, x.DriverAvatarImageKeySnapshot, x.VehicleType, x.PickupAddress, x.PickupLatitude, x.PickupLongitude, x.DestinationAddress, x.DestinationLatitude, x.DestinationLongitude, status = x.Status.ToString(), x.StateVersion, x.AgreedAmount, x.Currency, x.PaymentId, x.PaymentStatus, x.FailureReason, x.CreatedAt, x.UpdatedAt, x.DriverAcceptedAt, x.PickedUpAt, x.DroppedOffAt, x.CompletedAt, proposals = x.Proposals.Select(p => new { p.Id, p.DriverId, p.QuoteId, p.Amount, p.Currency, status = p.Status.ToString(), p.RiderApprovalDeadline, p.RiderRespondedAt, p.DriverResponseDeadline, p.DriverNameSnapshot, p.DriverAvatarImageKeySnapshot, p.PlateNumberSnapshot, p.VehicleNameSnapshot, p.VehicleImageKeySnapshot }) };
+    private object Snapshot(TripEntity x) => new { x.Id, x.RiderId, x.RiderNameSnapshot,
+        RiderPhoneSnapshot = x.DriverId == UserId() && x.Status is TripStatus.DriverAccepted or TripStatus.EnRoute or TripStatus.PickedUp
+            ? x.RiderPhoneSnapshot : null,
+        x.DriverId, x.DriverAvatarImageKeySnapshot, x.VehicleType, x.PickupAddress, x.PickupLatitude, x.PickupLongitude, x.DestinationAddress, x.DestinationLatitude, x.DestinationLongitude, status = x.Status.ToString(), x.StateVersion, x.AgreedAmount, x.Currency, x.PaymentId, x.PaymentStatus, x.FailureReason, x.CreatedAt, x.UpdatedAt, x.DriverAcceptedAt, x.PickedUpAt, x.DroppedOffAt, x.CompletedAt, proposals = x.Proposals.Select(p => new { p.Id, p.DriverId, p.QuoteId, p.Amount, p.Currency, p.DistanceMeters, p.EstimatedDurationSeconds, status = p.Status.ToString(), p.RiderApprovalDeadline, p.RiderRespondedAt, p.DriverResponseDeadline, p.DriverNameSnapshot, p.DriverAvatarImageKeySnapshot, p.PlateNumberSnapshot, p.VehicleNameSnapshot, p.VehicleImageKeySnapshot }) };
 }
 
 public sealed record CreateTripRequest(string PickupAddress, double PickupLatitude, double PickupLongitude, string DestinationAddress, double DestinationLatitude, double DestinationLongitude, string VehicleType = "Motorbike");

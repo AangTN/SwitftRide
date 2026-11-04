@@ -95,39 +95,16 @@ public sealed class MatchingOperationsTests
     }
 
     [Fact]
-    public async Task Fare_quote_uses_Goong_route_metrics_and_persists_its_pricing_snapshot()
+    public void Fare_quote_uses_route_metrics_and_captures_its_pricing_snapshot()
     {
-        var store = new FakeMatchingStore([]);
-        var coordinator = CreateCoordinator(store, new FakeProfiles(), new FakeGoong());
-
-        var quote = await coordinator.CreateFareQuoteAsync(new FareQuoteRequest(
-            Guid.NewGuid(), Guid.NewGuid(), 10, 106, 10.1, 106.1), CancellationToken.None);
+        var coordinator = CreateCoordinator(new FakeMatchingStore([]), new FakeProfiles(), new FakeGoong());
+        var quote = coordinator.CalculateFareQuote(new FareQuoteRequest(
+            Guid.NewGuid(), Guid.NewGuid(), 10, 106, 10.1, 106.1), new RouteMetrics(2000, 60));
 
         Assert.Equal(10500m, quote.TotalAmount);
         Assert.Equal(2000, quote.DistanceMeters);
         Assert.Equal("Motorbike", quote.VehicleType);
-        Assert.Same(quote, store.SavedQuote);
         Assert.Equal(5000m, quote.PricingSnapshot.PerKilometer);
-    }
-
-    [Fact]
-    public async Task Proposal_quote_cannot_be_reused_for_another_trip_or_vehicle_type()
-    {
-        var existingQuote = new FareQuote
-        {
-            TripId = Guid.NewGuid().ToString(),
-            ProposalId = Guid.NewGuid().ToString(),
-            VehicleType = "Motorbike"
-        };
-        var store = new FakeMatchingStore([]) { ExistingQuote = existingQuote };
-        var coordinator = CreateCoordinator(store, new FakeProfiles(), new FakeGoong());
-
-        var exception = await Assert.ThrowsAsync<MatchingFailureException>(() =>
-            coordinator.CreateFareQuoteAsync(new FareQuoteRequest(
-                Guid.NewGuid(), Guid.Parse(existingQuote.ProposalId), 10, 106, 10.1, 106.1, "Car4Seats"),
-                CancellationToken.None));
-
-        Assert.Equal("proposal_quote_conflict", exception.Code);
     }
 
     private static MatchingCoordinator CreateCoordinator(
@@ -155,8 +132,6 @@ public sealed class MatchingOperationsTests
         public IReadOnlyCollection<string> ExcludedDriverIds { get; private set; } = [];
         public DriverAvailability? Reservation { get; private set; }
         public DriverAvailability? TripAssignment { get; init; }
-        public FareQuote? ExistingQuote { get; init; }
-        public FareQuote? SavedQuote { get; private set; }
         public Task<bool> UpdateAvailabilityAsync(
             string driverId, string vehicleType, DriverLocationUpdate update, DateTime now, CancellationToken ct) =>
             Task.FromResult(true);
@@ -212,12 +187,7 @@ public sealed class MatchingOperationsTests
             string driverId, string tripId, string proposalId, DateTime now, CancellationToken ct) =>
             Task.FromResult(false);
 
-        public Task<FareQuote> SaveQuoteAsync(FareQuote quote, CancellationToken ct)
-        {
-            if (ExistingQuote is not null) return Task.FromResult(ExistingQuote);
-            SavedQuote = quote;
-            return Task.FromResult(quote);
-        }
+
     }
 
     private sealed class FakeProfiles : IDriverProfileReader

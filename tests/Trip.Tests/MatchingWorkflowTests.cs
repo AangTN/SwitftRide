@@ -42,6 +42,27 @@ public sealed class MatchingWorkflowTests
     }
 
     [Fact]
+    public async Task Route_preview_is_sent_only_to_the_rider_while_the_proposal_is_current()
+    {
+        await using var f = new Fixture();
+        var trip = await f.MatchingTrip();
+        var proposal = Assert.Single(trip.Proposals);
+        var hub = new RecordingHub();
+        var consumer = new TripRoutePreviewConsumer(f.Db, hub);
+        var preview = new TripRoutePreview(trip.Id, proposal.Id, new RouteLeg("encoded", 1200, 360, f.Clock.GetUtcNow()));
+
+        await consumer.ForwardAsync(preview with { ProposalId = Guid.NewGuid() }, default);
+        Assert.Empty(hub.Events);
+        await consumer.ForwardAsync(preview, default);
+        Assert.Equal((f.Rider.ToString(), "TripRoutePreview"), Assert.Single(hub.Events));
+
+        trip.Status = TripStatus.Cancelled;
+        await f.Db.SaveChangesAsync();
+        await consumer.ForwardAsync(preview, default);
+        Assert.Single(hub.Events);
+    }
+
+    [Fact]
     public async Task Rider_confirms_driver_and_price_within_90_seconds_before_driver_gets_30_seconds()
     {
         await using var f = new Fixture();
@@ -95,6 +116,48 @@ public sealed class MatchingWorkflowTests
     }
 
     [Fact]
+    public async Task Rider_timeout_cancels_without_trying_another_driver()
+    {
+        await using var f = new Fixture();
+        var trip = await f.MatchingTrip();
+        var p = Assert.Single(trip.Proposals);
+        await f.Handler().ApplyAsync(new TripMatchingResult(trip.Id, p.Id,
+            new TripProposalCandidate(p.Id, f.Driver, "quote", 25000, "VND", "Driver", "59A", "Bike", null)), default);
+        var services = new ServiceCollection().AddSingleton(f.Db).AddSingleton<ITripRealtimePublisher>(f.Realtime)
+            .AddSingleton<ITripMatchingNotifier>(new TripMatchingNotifier(f.Db, f.Clock));
+        await using var provider = services.BuildServiceProvider();
+        var worker = new ProposalExpiryWorker(provider.GetRequiredService<IServiceScopeFactory>(), f.Clock,
+            NullLogger<ProposalExpiryWorker>.Instance, Options.Create(new TripWorkflowOptions()));
+
+        f.Clock.Advance(90);
+        await worker.ExpireAsync(default);
+
+        Assert.Equal(TripStatus.Cancelled, trip.Status);
+        Assert.Equal(ProposalStatus.RiderTimedOut, Assert.Single(trip.Proposals).Status);
+        Assert.DoesNotContain(await f.Db.OutboxMessages.ToListAsync(), x => x.Kind == TripMessageKind.FindDriver);
+        Assert.Contains(await f.Db.OutboxMessages.ToListAsync(), x => x.Kind == TripMessageKind.ReleaseDriver);
+        Assert.Contains(await f.Db.OutboxMessages.ToListAsync(), x => x.Kind == TripMessageKind.RouteCleanup);
+    }
+
+    [Fact]
+    public async Task Rider_rejection_retries_until_three_offers_and_then_fails()
+    {
+        await using var f = new Fixture();
+        var trip = await f.MatchingTrip();
+        for (var attempt = 1; attempt <= 3; attempt++)
+        {
+            var p = Assert.Single(trip.Proposals, x => x.Status == ProposalStatus.Searching);
+            await f.Handler().ApplyAsync(new TripMatchingResult(trip.Id, p.Id,
+                new TripProposalCandidate(p.Id, Guid.NewGuid(), "quote", 25000, "VND", "Driver", "59A", "Bike", null)), default);
+            await f.Controller(f.Rider, "Rider").Reject(trip.Id, p.Id, new VersionRequest(trip.StateVersion), default);
+            Assert.Equal(ProposalStatus.RiderRejected, p.Status);
+            Assert.Equal(attempt == 3 ? TripStatus.Failed : TripStatus.Matching, trip.Status);
+        }
+        Assert.Equal(3, trip.Proposals.Count);
+        Assert.Single(await f.Db.OutboxMessages.Where(x => x.Kind == TripMessageKind.RouteCleanup).ToListAsync());
+    }
+
+    [Fact]
     public async Task No_driver_failure_updates_trip_and_notifies_rider_idempotently()
     {
         await using var f = new Fixture();
@@ -117,7 +180,7 @@ public sealed class MatchingWorkflowTests
         var trip = await f.AcceptedTrip();
         await f.Controller(f.Rider, "Rider").Cancel(trip.Id, new VersionRequest(trip.StateVersion), default);
         Assert.Equal(TripStatus.Cancelled, trip.Status);
-        var release = JsonSerializer.Deserialize<DriverReservationReleaseRequested>((await f.Db.OutboxMessages.SingleAsync()).Payload)!;
+        var release = JsonSerializer.Deserialize<DriverReservationReleaseRequested>((await f.Db.OutboxMessages.SingleAsync(x => x.Kind == TripMessageKind.ReleaseDriver)).Payload)!;
         Assert.Equal(f.Driver, release.DriverId);
         Assert.Equal(trip.Id, release.TripId);
         Assert.Equal(Assert.Single(trip.Proposals).Id, release.ProposalId);

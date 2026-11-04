@@ -11,12 +11,21 @@ builder.Services.AddServiceDefaults(builder.Configuration, builder.Environment.I
     x.AddConsumer<PaymentResultConsumer>(c => c.UseMessageRetry(r => r.Interval(3, TimeSpan.FromMilliseconds(200))));
     x.AddConsumer<TripMatchingResultConsumer>(c => c.UseMessageRetry(r => r.Interval(3, TimeSpan.FromMilliseconds(200))));
     x.AddConsumer<DriverGpsUpdatedConsumer>();
+    x.AddConsumer<TripRoutesUpdatedConsumer>();
+    x.AddConsumer<TripRoutePreviewConsumer>();
+    x.AddRequestClient<SwiftRide.Contracts.Trips.GetTripRoutePreview>();
+    x.AddRequestClient<SwiftRide.Contracts.Trips.GetTripRoutes>();
 });
 builder.Services.AddDbContext<TripDbContext>(o => o.UseSqlServer(builder.Configuration.GetConnectionString("TripDb")
     ?? throw new InvalidOperationException("ConnectionStrings:TripDb is required.")));
 builder.Services.AddSingleton(TimeProvider.System);
 builder.Services.Configure<TripWorkflowOptions>(builder.Configuration.GetSection("TripWorkflow"));
 builder.Services.AddSignalR();
+builder.Services.AddHttpClient<RiderProfileClient>(client =>
+{
+    client.BaseAddress = new Uri(builder.Configuration["Auth:BaseUrl"] ?? "http://localhost:5101/");
+    client.Timeout = TimeSpan.FromSeconds(5);
+});
 builder.Services.AddSingleton<Microsoft.AspNetCore.SignalR.IUserIdProvider, SubjectUserIdProvider>();
 builder.Services.AddScoped<ITripRealtimePublisher, TripRealtimePublisher>();
 builder.Services.AddScoped<ITripMatchingNotifier, TripMatchingNotifier>();

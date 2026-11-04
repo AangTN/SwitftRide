@@ -37,6 +37,8 @@ public sealed class TripOutboxDispatcher(TripDbContext db, IPublishEndpoint bus,
         var originalVersion = trip.StateVersion;
         if ((message.Kind == TripMessageKind.FindDriver &&
                 (trip.Status != TripStatus.Matching || proposal?.Status != ProposalStatus.Searching)) ||
+            (message.Kind == TripMessageKind.RouteStage &&
+                !TripRouting.IsCurrentStage(trip.Status, JsonSerializer.Deserialize<TripRouteRequested>(message.Payload)!.Stage)) ||
             (message.Kind == TripMessageKind.RequestPayment &&
                 (trip.Status != TripStatus.PaymentPending || trip.PaymentStatus is "Succeeded" or "Failed")))
         {
@@ -68,6 +70,12 @@ public sealed class TripOutboxDispatcher(TripDbContext db, IPublishEndpoint bus,
                     case TripMessageKind.ConfirmDriver:
                         await PublishAsync<DriverReservationConfirmed>(message, timeout.Token);
                         break;
+                    case TripMessageKind.RouteStage:
+                        await PublishAsync<TripRouteRequested>(message, timeout.Token);
+                        break;
+                    case TripMessageKind.RouteCleanup:
+                        await PublishAsync<TripRouteCleanup>(message, timeout.Token);
+                        break;
                     case TripMessageKind.RequestPayment:
                         await PublishAsync<PaymentRequested>(message, timeout.Token);
                         break;
@@ -91,6 +99,7 @@ public sealed class TripOutboxDispatcher(TripDbContext db, IPublishEndpoint bus,
                         proposal!.Status = ProposalStatus.Cancelled;
                         proposal.ResolvedAt = clock.GetUtcNow();
                         TripStateMachine.Move(trip, TripStatus.Failed, null, clock.GetUtcNow(), "matching_delivery_failed");
+                        TripRouting.EnqueueCleanup(db, trip, clock.GetUtcNow());
                     }
                     else if (message.Kind == TripMessageKind.RequestPayment && trip.PaymentStatus == "Pending")
                     {

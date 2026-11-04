@@ -47,7 +47,7 @@ public sealed class MatchingController(MatchingCoordinator coordinator, IMatchin
         var now = DateTime.UtcNow;
         var driver = await store.UpdateGpsAsync(UserId(), request, now, ct);
         if (driver is null) return NotFound();
-        if (driver.Status is ("Reserved" or "Busy") &&
+        if (driver.Status == "Busy" &&
             Guid.TryParse(driver.CurrentTripId, out var tripId) &&
             Guid.TryParse(driver.CurrentProposalId, out var proposalId))
             await bus.Publish(new DriverGpsUpdated(tripId, proposalId, Guid.Parse(driver.Id),

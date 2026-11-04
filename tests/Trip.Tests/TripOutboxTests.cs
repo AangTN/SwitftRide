@@ -73,13 +73,13 @@ public sealed class TripOutboxTests
         {
             fixture.Db.ChangeTracker.Clear(); // simulate a new worker scope/restart
             Assert.True(await fixture.Dispatcher().DispatchOneAsync(default));
-            var message = await fixture.Db.OutboxMessages.SingleAsync();
+            var message = await fixture.Db.OutboxMessages.SingleAsync(x => x.Id == id);
             Assert.Equal(id, message.Id);
             Assert.Equal(attempt, message.Attempts);
             Assert.Equal(attempt == 4 ? TripMessageStatus.Failed : TripMessageStatus.Pending, message.Status);
-            Assert.False(await fixture.Dispatcher().DispatchOneAsync(default));
             if (attempt < 4)
             {
+                Assert.False(await fixture.Dispatcher().DispatchOneAsync(default));
                 fixture.Clock.Advance(4);
                 Assert.False(await fixture.Dispatcher().DispatchOneAsync(default));
                 fixture.Clock.Advance(1);
@@ -90,6 +90,7 @@ public sealed class TripOutboxTests
         Assert.Equal("matching_delivery_failed", saved.FailureReason);
         Assert.Equal(ProposalStatus.Cancelled, Assert.Single(saved.Proposals).Status);
         Assert.Equal(4, fixture.Transport.Calls);
+        Assert.Single(await fixture.Db.OutboxMessages.Where(x => x.Kind == TripMessageKind.RouteCleanup).ToListAsync());
     }
 
     [Fact]

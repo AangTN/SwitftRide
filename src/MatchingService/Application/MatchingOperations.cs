@@ -28,7 +28,7 @@ public sealed record FareQuoteRequest(
     double DestinationLongitude,
     string VehicleType = "Motorbike");
 
-public sealed record RouteMetrics(double DistanceMeters, int DurationSeconds);
+public sealed record RouteMetrics(double DistanceMeters, int DurationSeconds, string? Polyline = null);
 
 public sealed record GeocodedAddress(string FormattedAddress, double Latitude, double Longitude, string? PlaceId);
 
@@ -84,7 +84,6 @@ public interface IMatchingStore
         string driverId, string tripId, string proposalId, DateTime now, CancellationToken ct);
     Task<bool> ReleaseReservationAsync(
         string driverId, string tripId, string proposalId, DateTime now, CancellationToken ct);
-    Task<FareQuote> SaveQuoteAsync(FareQuote quote, CancellationToken ct);
 }
 
 public interface IGoongClient
@@ -178,19 +177,18 @@ public sealed class MatchingCoordinator(
         string driverId, Guid tripId, Guid proposalId, CancellationToken ct) =>
         store.ReleaseReservationAsync(driverId, tripId.ToString(), proposalId.ToString(), DateTime.UtcNow, ct);
 
-    public async Task<FareQuote> CreateFareQuoteAsync(FareQuoteRequest request, CancellationToken ct)
+    public FareQuote CalculateFareQuote(FareQuoteRequest request, RouteMetrics route)
     {
         if (request.TripId == Guid.Empty || request.ProposalId == Guid.Empty)
             throw new MatchingFailureException(400, "invalid_proposal", "TripId and ProposalId must be non-empty UUIDs.");
         ValidateCoordinate(request.PickupLatitude, request.PickupLongitude);
         ValidateCoordinate(request.DestinationLatitude, request.DestinationLongitude);
         var vehicleType = NormalizeVehicleType(request.VehicleType);
-        var route = await goong.GetRouteAsync(request.PickupLatitude, request.PickupLongitude,
-            request.DestinationLatitude, request.DestinationLongitude, vehicleType, ct);
         var total = fareCalculator.Calculate(route, pricing);
         var now = DateTime.UtcNow;
-        var quote = new FareQuote
+        return new FareQuote
         {
+            Id = request.ProposalId.ToString(),
             TripId = request.TripId.ToString(),
             ProposalId = request.ProposalId.ToString(),
             VehicleType = vehicleType,
@@ -209,11 +207,7 @@ public sealed class MatchingCoordinator(
             ExpiresAt = now.AddSeconds(matching.QuoteValiditySeconds),
             CreatedAt = now
         };
-        var savedQuote = await store.SaveQuoteAsync(quote, ct);
-        if (savedQuote.TripId != quote.TripId || savedQuote.VehicleType != quote.VehicleType)
-            throw new MatchingFailureException(409, "proposal_quote_conflict",
-                "This proposal already has a quote for a different trip or vehicle type.");
-        return savedQuote;
+
     }
 
     public Task<GeocodedAddress?> GeocodeAsync(string address, CancellationToken ct) =>
@@ -293,7 +287,7 @@ public sealed class MatchingCoordinator(
         Coordinates = [longitude, latitude]
     };
 
-    private static double DistanceMeters(double latitude1, double longitude1, double latitude2, double longitude2)
+    public static double DistanceMeters(double latitude1, double longitude1, double latitude2, double longitude2)
     {
         const double earthRadiusMeters = 6_371_000;
         var latitudeDelta = DegreesToRadians(latitude2 - latitude1);

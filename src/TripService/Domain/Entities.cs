@@ -7,6 +7,8 @@ public sealed class Trip
 {
     public Guid Id { get; set; } = Guid.NewGuid();
     public Guid RiderId { get; set; }
+    public string? RiderNameSnapshot { get; set; }
+    public string? RiderPhoneSnapshot { get; set; }
     public Guid? DriverId { get; set; }
     public string IdempotencyKey { get; set; } = "";
     public string PickupAddress { get; set; } = "";
@@ -46,6 +48,9 @@ public sealed class TripProposal
     public Guid? DriverId { get; set; }
     public string? QuoteId { get; set; }
     public decimal? Amount { get; set; }
+    public double? DistanceMeters { get; set; }
+    public int? EstimatedDurationSeconds { get; set; }
+    public string? PricingSnapshotJson { get; set; }
     public string Currency { get; set; } = "VND";
     public string? DriverNameSnapshot { get; set; }
     public string? DriverAvatarImageKeySnapshot { get; set; }
