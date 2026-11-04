@@ -1,5 +1,28 @@
 # Sơ đồ database SwiftRide — thiết kế đề xuất
 
+## Schema đang triển khai
+
+| Kho | Dữ liệu chính |
+|---|---|
+| AuthDB · PostgreSQL | `users`, `roles`, `user_roles`, `otp_challenges`, `auth_sessions`, `refresh_tokens`. `legacy_driver_profiles` là bản lưu chuyển đổi. |
+| TripDB · SQL Server | `trips`, `trip_proposals`, `trip_status_history`, `outbox_messages`. |
+| MatchingDB · MongoDB | `driver_profiles`, `driver_availability`, `matching_jobs`. |
+| PaymentDB · PostgreSQL | `payments`, `ledger_accounts`, `ledger_transactions`, `ledger_entries`, `outbox_messages`. |
+| Redis · Matching | Cache polyline và thời gian tới đón theo chuyến/đề xuất. |
+
+- Trip lưu giá, quãng đường, thời gian dự kiến và thông số tính giá trong
+  `trip_proposals`. `trips` giữ giá đã chốt và thông tin khách tại lúc đặt.
+  Migration `RiderAndFareSnapshots` bổ sung các trường này. Thời hạn mặc định
+  là 90 giây cho khách và 30 giây cho tài xế, tối đa 3 đề xuất.
+- Matching dùng `matching_jobs` để xử lý lệnh và gửi lại kết quả theo
+  `proposalId`. Code hiện tại đã bỏ sử dụng `fare_quotes`. Dữ liệu cũ có
+  thể còn trên môi trường đã nâng cấp.
+- Payment dùng sổ cái nội bộ cho ví demo. `ledger_accounts` xác định tài khoản
+  sổ cái; số dư được tính từ `ledger_entries`. Chưa có bảng liên kết thẻ/ngân hàng.
+- Migration, mapping EF và code MongoDB là nguồn đối chiếu khi cần từng cột
+  chính xác. Các file `*.proposed.*`, ảnh và từ điển bên dưới là tài liệu thiết
+  kế, có thể khác schema triển khai.
+
 ## File draw.io chỉnh sửa được
 
 Mở `swiftride.proposed.drawio` bằng https://app.diagrams.net: **Device → Open Existing Diagram**, hoặc **File → Open From → Device**. Không cần paste DBML.
@@ -21,7 +44,7 @@ Role đã cập nhật: `roles.id` là UUID/PK, `roles.name` là UNIQUE; bảng 
 
 Đường liền trong sơ đồ chi tiết là FK nội bộ database SQL. Đường đứt giữa hai collection Matching là liên kết logic theo UserId, không có FK MongoDB. Các ID xuyên database được ghi ở field notes trong DBML và phần giải thích dưới đây, không phải FK vật lý. PK = khóa chính, FK = khóa ngoại, UQ = duy nhất, dấu `?` = nullable. Tất cả thời gian UTC.
 
-Đây là sơ đồ thiết kế đích. Hồ sơ tài xế trong Matching và tên tài xế riêng đã được triển khai; các phần Trip/proposal còn là đề xuất.
+Sơ đồ ghi lại phương án thiết kế tại thời điểm vẽ. Trip/proposal đã triển khai theo schema ở trên.
 
 ## File DBML
 
@@ -34,7 +57,7 @@ Role đã cập nhật: `roles.id` là UUID/PK, `roles.name` là UNIQUE; bảng 
 | MatchingDB | MongoDB | driver_profiles, driver_availability |
 | PaymentDB | PostgreSQL | payments, ledger_accounts, ledger_transactions, ledger_entries |
 
-File tổng hợp dùng Auth/Payment theo schema hiện có; `driver_profiles` đã được triển khai ở Matching với `legalName` độc lập. Trip/proposal và các trạng thái giữ chỗ của Matching vẫn là thiết kế đích. Collection `fare_quotes` vẫn còn trong code đang chạy; `legacy_driver_profiles` ở AuthDB chỉ là bản lưu chuyển đổi, không phải nguồn hồ sơ hoạt động.
+Bảng này liệt kê các hộp trong file thiết kế, còn danh sách đang chạy nằm ở đầu tài liệu.
 
 `auth-payment.proposed.dbml` và `trip-matching.proposed.dbml` là hai sơ đồ nhỏ nếu muốn xem từng cặp database. Không paste thêm chúng sau file tổng hợp vì sẽ trùng bảng.
 
@@ -51,7 +74,7 @@ Mỗi database SQL còn có bảng kỹ thuật `__EFMigrationsHistory` với `M
 
 ## Phần TripDB / MatchingDB
 
-File `trip-matching.proposed.dbml` mô tả thiết kế mới nhất đã thảo luận, **không phải database đang chạy**. Chưa tạo migration hoặc thay đổi dữ liệu ứng dụng.
+File `trip-matching.proposed.dbml` ghi lại phương án thiết kế trước đây. Đối chiếu schema đang triển khai ở đầu tài liệu.
 
 ## Cách vẽ trên dbdiagram.io
 
@@ -63,7 +86,7 @@ Tên `TripDB` và `MatchingDB` được dùng làm namespace/schema trong công 
 
 MongoDB được mô phỏng bằng các hộp bảng để thể hiện field. `location` là object GeoJSON nhúng; Date là BSON Date; các kiểu chuỗi trong sơ đồ chỉ thể hiện định dạng/giới hạn mong muốn. MongoDB không có khóa ngoại SQL. Không dùng SQL export của sơ đồ tổng hợp để triển khai hệ thống.
 
-## Nội dung
+## Nội dung phương án thiết kế
 
 - TripDB: `trips`, `trip_proposals`, `trip_status_history`.
 - MatchingDB: `driver_profiles`, `driver_availability`.
@@ -78,12 +101,15 @@ MongoDB được mô phỏng bằng các hộp bảng để thể hiện field. 
 - Khóa ngoại ghép từ `(trips.id, trips.accepted_proposal_id)` tới `(trip_proposals.trip_id, trip_proposals.id)` bảo đảm proposal được chọn thuộc đúng chuyến. Việc tạo chuyến không bị vòng chèn dữ liệu vì `accepted_proposal_id` ban đầu null.
 - Các unique index có điều kiện cho proposal, MongoDB `2dsphere`, kiểm tra trạng thái, tính bất biến của báo giá và xử lý nguyên tử/timeout được ghi bằng notes. Khi triển khai phải viết migration/index và logic tương ứng.
 - Worker không dùng TTL để xóa tài xế; khi hết hạn chỉ giải phóng giữ chỗ, không xóa document.
-- Thời gian khách/tài xế phản hồi chưa phải ràng buộc schema; mặc định đã đề xuất là 30 giây cho khách, 15 giây cho tài xế, cấu hình được.
+- Thời gian khách/tài xế phản hồi chưa phải ràng buộc schema; bản thiết kế cũ dùng 30/15 giây; code hiện tại mặc định 90/30 giây.
 
 ## Cấu trúc đang chạy khác gì?
 
-Code hiện tại vẫn có Trip với `driver_id`, giá, `quote_id`, snapshot trực tiếp; Matching vẫn có `driver_availability` và `fare_quotes`; hồ sơ tài xế và xe đã chuyển sang MatchingDB, có API đọc hồ sơ; luồng Trip/proposal còn là thiết kế. File này chỉ là tài liệu thiết kế thay thế cho bước phát triển tiếp theo.
+Trip giữ giá và snapshot đã chốt trực tiếp trên `trips`; `quote_id` vẫn có
+trong schema Trip hiện tại. MongoDB thêm `matching_jobs`, còn Redis giữ tuyến
+tạm thời. Xem [luồng Matching–Trip](../matching-integration.md) để đối chiếu
+hành vi hiện tại.
 
 ## Hồ sơ tài xế đã triển khai
 
-Matching đã có collection driver_profiles với legalName độc lập; Auth chỉ giữ tên hiển thị khách. Các phần Trip/proposal trong sơ đồ vẫn là đề xuất. Xem [hướng dẫn chuyển dữ liệu](../driver-profile-migration.md).
+Matching đã có collection driver_profiles với legalName độc lập; Auth chỉ giữ tên hiển thị khách. Xem [hướng dẫn chuyển dữ liệu](../driver-profile-migration.md).

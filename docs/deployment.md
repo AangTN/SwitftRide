@@ -7,7 +7,9 @@ It is intended for demonstrations. Secrets and database volumes persist on the V
 Nginx runs in Docker on public ports 80 and 443. The rider app is at `/`, the driver
 app at `/driver/`, and `/api/` is forwarded to Gateway. Gateway trusts only Nginx's
 Docker address for forwarded headers; API services trust Gateway. Database and
-direct API ports remain bound to the VPS loopback interface.
+direct API ports remain bound to the VPS loopback interface. Redis serves
+Matching on a private Docker network. It has no published port and caches
+routes and pickup estimates; TripDB stores trip state and fares.
 
 The VPS override uses MongoDB 7.0.45 for compatibility with the host's Ubuntu
 kernel (see [MongoDB SERVER-136848](https://jira.mongodb.org/browse/SERVER-136848)).
@@ -66,9 +68,11 @@ Configure repository Actions secrets:
   The web job requires this secret and passes only this key through a temporary
   JSON file. The key is bundled in the browser app; adding it to the VPS `.env`
   alone does not change an existing build. Configure the key's URL restrictions
-  for the deployed HTTPS origin. `GOONG_API_KEY` is not used yet and must not be
-  passed to Flutter; future server-side address/routing calls should load it
-  from the VPS environment.
+  for the deployed HTTPS origin.
+- `GOONG_API_KEY`: Goong REST key for Matching address search and routing.
+  The deploy job sends it over SSH to `/opt/swiftride/.secrets/goong-api-key`.
+  The release script loads it into Matching through Compose. Flutter builds
+  receive only the Maptiles key.
 - `DEPLOY_HOST`: static public IP matching the certificate.
 - `DEPLOY_SSH_KEY`: dedicated SSH private key authorized for the deploy user.
 - `DEPLOY_KNOWN_HOSTS`: verified SSH host key line for the server.

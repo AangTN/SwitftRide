@@ -14,15 +14,17 @@
    `TripMatchingResult`. Kết quả có tài xế + giá hoặc mã lỗi/không tìm thấy tài xế.
    Trip lưu kết quả rồi gửi `TripChanged` qua SignalR; app gọi GET lấy snapshot.
 5. Khách có **90 giây xác nhận cả tài xế và giá**. Snapshot proposal có tên,
-   biển số, tên/ảnh xe, số tiền và `riderApprovalDeadline`.
+   avatar, biển số, tên/ảnh xe, số tiền, quãng đường, thời gian dự kiến cả
+   chuyến và `riderApprovalDeadline`.
    Chưa xác nhận thì chưa gửi lời mời cho tài xế.
 6. Khách đồng ý: tài xế đó nhận `DriverInvitation` qua kết nối SignalR tài khoản,
    có **30 giây trả lời**, tính từ lúc khách đồng ý.
    Tài xế gọi API Trip để nhận/từ chối, không gọi API Matching để tự giữ xe.
-7. Từ chối hoặc quá 30 giây: Trip lưu lệnh giải phóng và tìm người khác vào Outbox.
-   Khách xác nhận lại tài xế + giá mới. Tối đa **3 tài xế**, gồm lần đầu;
-   retry giao thông điệp không tính thành một lần tìm tài xế mới.
-   Khách từ chối/quá 90 giây thì hủy chuyến và giải phóng tài xế.
+7. Khách chủ động từ chối, tài xế từ chối hoặc tài xế hết 30 giây: Trip
+   giải phóng tài xế và tìm tiếp nếu còn lượt. Khách duyệt lại tài xế và giá
+   của đề xuất mới. Tối đa **3 đề xuất**, tính cả lần đầu. Gửi lại tin RabbitMQ
+   không tính thêm lượt. Hết lượt thì `Failed`. Khách hết 90 giây thì hủy chuyến
+   ngay và giải phóng tài xế.
 8. Tài xế nhận: Trip lưu `DriverReservationConfirmed` vào Outbox, Matching đổi
    `Reserved` thành `Busy`. Tài xế tham gia kênh chuyến bằng cùng kết nối SignalR.
 9. Hủy trước khi đón hoặc trả khách xong: Outbox Trip gửi
@@ -61,7 +63,7 @@
   body `{ "latitude": 10.78, "longitude": 106.69 }`.
   Chỉ cập nhật GPS và thời điểm, không đổi trạng thái nhận chuyến.
   `Reserved`/`Busy` vẫn gửi được. App tài xế cần gọi định kỳ khi hoạt động.
-- Khi có assignment, Matching gửi `DriverGpsUpdated` qua RabbitMQ.
+- Khi tài xế ở trạng thái `Busy`, Matching gửi `DriverGpsUpdated` qua RabbitMQ.
   Trip kiểm tra tài xế, proposal đã nhận và chuyến chưa trả khách/hủy,
   rồi gửi **`DriverLocationUpdated`** riêng cho đúng khách qua SignalR.
   Payload gồm `tripId`, `proposalId`, `driverId`, tọa độ, `recordedAt`.
@@ -72,6 +74,23 @@
   `reservations/*/decline`: thao tác nghiệp vụ phải đi qua Trip và RabbitMQ.
 - Khách tạo chuyến rồi SubscribeTrip + GET snapshot. Tài xế nhận lời mời qua
   tài khoản, chỉ SubscribeTrip sau khi được Trip xác nhận nhận chuyến.
+
+## Tuyến đường và thời gian tới đón
+
+- `GET /api/trips/{tripId}/route` qua Gateway trả tuyến xem trước đón → đến
+  trong lúc duyệt đề xuất. Đúng tài xế được mời có thể lấy tuyến khi lời mời
+  còn hiệu lực. App đọc `pickupEtaMinutes` để hiện số phút tới đón, còn quãng
+  đường và thời gian dự kiến cả chuyến lấy từ proposal.
+- Matching dùng Goong Directions V2 để tính tuyến đón → đến lúc báo giá và
+  tuyến tới đón theo đề xuất. Redis giữ cả hai. Nếu cache còn, lúc nhận chuyến
+  Matching dùng lại tuyến đã tính. Khi tài xế đón khách, Trip báo Matching đổi
+  chặng. Matching tính lại tuyến đang chạy nếu GPS lệch rõ.
+- Matching đẩy `TripRoutePreview` cho khách và `TripRoutesUpdated` cho hai bên
+  qua RabbitMQ → Trip → SignalR. Khi reconnect, app tải lại snapshot và tuyến.
+  API trả 204 khi chưa có tuyến. Giữ trạng thái chuyến và báo giá trong TripDB.
+- Cache đường đi có TTL một giờ. Matching gia hạn tuyến đang chạy khi xử lý GPS.
+  Khi từ chối đề xuất, giải phóng tài xế và dọn cache tới đón của đề xuất cũ,
+  giữ tuyến đón → đến để tìm tiếp. Khi kết thúc chuyến, dọn cache của chuyến.
 
 ## Database và chạy kiểm tra
 
@@ -85,6 +104,11 @@
   ảnh, không tạo API upload hoặc tự gán ảnh cho tài xế.
 - Migration SQL Server `TripVehicleType` thêm `trips.vehicle_type`;
   dữ liệu cũ mặc định `Motorbike`. Không có migration PostgreSQL.
+- Migration `RiderAndFareSnapshots` lưu tên/SĐT khách và số liệu báo giá trong
+  TripDB. Chỉ tài xế đã nhận và đang phục vụ chuyến được xem SĐT khách.
+- Matching đã bỏ sử dụng `fare_quotes`. Báo giá nằm ở `trip_proposals`; bản
+  kết quả gửi lại nằm trong `matching_jobs`. Collection cũ có thể còn trên môi
+  trường đã nâng cấp.
 - MongoDB tạo collection/index `matching_jobs` khi khởi động. Không cần bật
   replica set: inbox/kết quả nằm cùng một document; giữ tài xế là cập nhật
   có điều kiện trên document tài xế, có khóa duy nhất theo chuyến/proposal.
@@ -93,4 +117,5 @@
 - `dotnet test SwiftRide.sln` chạy các bài kiểm tra thông thường.
 - Chạy thêm MongoDB riêng cho test, đặt `SWIFTRIDE_TEST_MONGO` tới server test
   rồi chạy `dotnet test tests/Matching.Tests/SwiftRide.Matching.Tests.csproj`.
-  Mỗi test tạo database `matching_test_<uuid>` và xóa database đó sau khi chạy.
+  Đặt thêm `SWIFTRIDE_TEST_REDIS` để chạy ca cache và đổi chặng. Mỗi test
+  MongoDB tạo và dọn database `matching_test_<uuid>`. Xem [cách chạy test](../README.md#kiểm-thử).
