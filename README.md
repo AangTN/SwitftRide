@@ -7,11 +7,11 @@ Backend .NET 10 gồm Auth, Trip, Matching & Pricing, Payment và API Gateway YA
 ## Phạm vi đã triển khai
 
 - Auth: đăng ký/đăng nhập SĐT + OTP, kích hoạt Rider cho tài khoản đã có, đổi tên khách, JWT RS256, refresh rotation, phát hiện reuse, phiên độc lập, logout, `/me`, nhiều role. Hồ sơ tài xế do Matching quản lý.
-- EF migrations cho Auth/PostgreSQL, Trip/SQL Server, Payment/PostgreSQL; collection/index và seed trạng thái Driver cho Matching/MongoDB.
-- RabbitMQ/MassTransit, health/readiness, correlation ID, lỗi Problem Details, OpenAPI/Swagger Development, Docker Compose.
-- Có hai app Flutter khách hàng/tài xế: đăng nhập OTP, đăng ký khách hàng, hồ sơ và đăng xuất; chạy thử web trên PC hoặc Android. Xem [hướng dẫn app](apps/mobile/DEVELOPMENT.md).
-- Matching & Pricing có API cập nhật vị trí/trạng thái tài xế, tìm và khóa tài xế gần nhất, chấp nhận/từ chối khóa, tra địa chỉ và tạo báo giá theo tuyến Goong. Trip chưa tích hợp vòng đời proposal với Matching; Auth, Trip và Payment vẫn do các nhóm tương ứng sở hữu.
-- Chưa có API nghiệp vụ chuyến đi/thanh toán, cổng SMS, upload ảnh, ví, hoàn tiền, Saga hoặc Outbox. Schema sổ cái có sẵn; chưa có nghiệp vụ ghi sổ hay tính phí nền tảng.
+- Trip: tạo chuyến chống trùng, duyệt tài xế và giá, theo dõi từng lần đề xuất, đón/trả khách, lịch sử và SignalR qua Gateway.
+- Matching & Pricing: hồ sơ xe/tài xế, GPS và trạng thái nhận chuyến, tìm và giữ tài xế, báo giá và định tuyến Goong V2. MongoDB lưu vị trí và công việc tích hợp; Redis giữ tuyến và thời gian tới đón tạm thời.
+- Payment: ví SwiftRide demo, ghi sổ, chống trừ tiền lặp, hoàn tiền nội bộ và API thu nhập tài xế. Chưa tích hợp thẻ, ngân hàng hoặc cổng SMS thật.
+- Backend giao tiếp qua RabbitMQ/MassTransit; Trip và Payment dùng Outbox. Có health checks, Problem Details, Swagger ở Development và Docker Compose.
+- Hai app Flutter có luồng OTP và hồ sơ. App khách đã có màn chọn địa chỉ và loại xe. Các màn đặt chuyến, theo dõi, thanh toán và thu nhập đang chờ nối frontend với API. Xem [hướng dẫn app](apps/mobile/DEVELOPMENT.md).
 
 ## Chạy hai app trên PC
 
@@ -61,7 +61,7 @@ Compose này dành cho **Development**, tự migrate và seed khi khởi động
 | Payment Swagger | http://localhost:5104/swagger |
 | RabbitMQ Management | http://localhost:15672 |
 
-Swagger Matching hiển thị các API nghiệp vụ bên dưới; các API Trip/Payment chưa được triển khai. RabbitMQ đăng nhập bằng user `swiftride` và mật khẩu trong `.env`.
+Redis chạy trên mạng nội bộ dành cho Matching, không mở cổng ra máy host trong Compose. RabbitMQ đăng nhập bằng user `swiftride` và mật khẩu trong `.env`.
 
 `GET /health/live` kiểm tra process; `GET /health/ready` kiểm tra database và broker tại các service. Gateway readiness kiểm tra readiness cả bốn backend.
 
@@ -78,13 +78,40 @@ Các API dưới đây đi qua Gateway (`http://localhost:5000`) và yêu cầu 
 | `GET /api/matching/places/details?placeId=...` | Rider, Driver | Địa chỉ và tọa độ đúng địa điểm đã chọn |
 | `GET /api/matching/places/reverse?latitude=...&longitude=...` | Rider, Driver | Tra địa chỉ từ tọa độ bằng Goong |
 
-Khách tạo chuyến qua Trip với điểm đón/đến và `vehicleType` (`Motorbike`, `Car4Seats`, `Car7Seats`). Trip gửi lệnh tìm tài xế/định giá qua RabbitMQ; app không gọi trực tiếp Matching để giữ tài xế hoặc tạo giá chính thức. Matching tìm trong 10 km, loại GPS quá 120 giây. Khách có 90 giây xác nhận cả tài xế và giá, sau đó tài xế có 30 giây trả lời. Trip quyết định hết hạn và gửi lệnh giải phóng qua Outbox. Giá áp dụng `p = ((cd*d + ct*t)*s + cm)*eta*(1+T)`; dùng decimal, làm tròn VND lên tại nửa đồng và lưu snapshot theo proposal.
+Đặt `GOONG_API_KEY` trong `.env` để Matching dùng Goong REST cho địa chỉ và định tuyến. `GOONG_MAPTILES_KEY` dành cho bản đồ Flutter. CI/CD đọc hai khóa từ Actions secrets. Khi thiếu REST key, API địa chỉ trả `503 goong_not_configured`. Xem [tìm kiếm địa chỉ](docs/place-search.md).
 
-Đặt `GOONG_API_KEY` trong `.env` để bật tra địa chỉ và định tuyến. Compose chỉ chuyển khóa cho Matching backend; không đưa khóa này vào Flutter. Khi chưa cấu hình, API Goong trả lỗi `503 goong_not_configured` thay vì ước lượng tuyến/giá giả. Có thể chỉnh bán kính tìm kiếm, thời hạn vị trí/khóa/báo giá và đơn giá trong cấu hình `Matching`/`Pricing` của Matching.
+## Đặt xe, tuyến đường và thanh toán
 
-Tìm kiếm, chi tiết địa điểm, geocode/reverse và định tuyến đều dùng Goong V2 để trả địa chỉ theo đơn vị hành chính mới. Các gợi ý có sẵn cũng đã cập nhật; chi tiết trong [docs/place-search.md](docs/place-search.md).
+Các API app gọi qua Gateway với JWT. Điểm đón và điểm đến là địa chỉ đã chọn kèm tọa độ. Loại xe gồm `Motorbike`, `Car4Seats`, `Car7Seats`.
 
-Matching chỉ sở hữu hồ sơ, vị trí/trạng thái tài xế, khóa, báo giá và công việc tích hợp MongoDB; không đọc/ghi trực tiếp TripDB. Trip có API xác nhận/nhận/từ chối chuyến, phát lệnh xác nhận/giải phóng tài xế qua Outbox. Matching chuyển GPS cho Trip để báo đúng khách qua SignalR. Chi tiết API, retry, migration và phần frontend cần nối: [docs/matching-integration.md](docs/matching-integration.md).
+| API | Hành vi |
+|---|---|
+| `POST /api/trips` | Tạo chuyến, gửi header `Idempotency-Key`. |
+| `GET /api/trips/current`, `GET /api/trips/{tripId}`, `GET /api/trips/history` | Khôi phục chuyến, đọc snapshot và lịch sử. |
+| `POST /api/trips/{tripId}/proposals/{proposalId}/approve` hoặc `reject` | Khách xác nhận hoặc từ chối tài xế và giá, gửi `stateVersion`. |
+| `POST /api/trips/{tripId}/driver-accept` hoặc `driver-reject` | Tài xế trả lời lời mời, gửi `proposalId` và `stateVersion`. |
+| `POST /api/trips/{tripId}/en-route`, `pickup`, `dropoff` hoặc `cancel` | Cập nhật chuyến theo quyền và trạng thái, gửi `stateVersion`. |
+| `GET /api/trips/{tripId}/route` | Lấy tuyến xem trước hoặc tuyến hiện tại. Tài xế được mời có quyền lấy tuyến xem trước khi lời mời còn hạn. Dùng `pickupEtaMinutes` để hiện số phút tới đón. |
+| `GET /api/payments/trips/{tripId}`, `GET /api/payments/me/wallet`, `GET /api/payments/drivers/me/earnings` | Tra kết quả thanh toán, số dư ví demo và thu nhập theo quyền. |
+
+Trip gửi yêu cầu qua Outbox và RabbitMQ. Matching tìm tài xế phù hợp trong bán kính mặc định 10 km, với GPS mới trong 120 giây. Khách có **90 giây** để duyệt, hết giờ thì hủy chuyến. Khách chủ động từ chối hoặc tài xế từ chối/hết **30 giây** thì tìm tiếp nếu còn lượt. Tối đa **3 đề xuất**, tính cả lượt đầu. Hết lượt thì chuyến là `Failed`.
+
+Matching tính quãng đường, thời gian và giá cho chặng đón → đến, rồi Trip lưu báo giá trong `trip_proposals`. Matching chuẩn bị thời gian tới đón theo đề xuất và dùng lại tuyến từ Redis khi tài xế nhận nếu cache còn. Khi đón khách, Trip báo đổi chặng. Nếu GPS cho thấy xe đi lệch, Matching tính lại tuyến đang chạy. Redis tự hết hạn sau một giờ, gia hạn tuyến đang chạy khi xử lý GPS và dọn cache khi chuyến kết thúc. Giá thanh toán lấy từ giá đã chốt trong TripDB.
+
+Khi trả khách, Trip giải phóng tài xế và yêu cầu Payment xử lý ví demo. Chuyến ở `PaymentPending` trong lúc xử lý hoặc khi thanh toán lỗi. App kiểm tra `paymentStatus` và chỉ báo thành công khi chuyến là `Paid`.
+
+### SignalR
+
+Hub qua Gateway tại `/api/trips/realtime`. Tài xế kết nối khi bật nhận chuyến để nghe lời mời theo tài khoản. Khách đăng ký chuyến bằng `SubscribeTrip` khi có ID, tài xế đăng ký trên cùng kết nối sau khi đã nhận. Khi kết nối lại, đăng ký lại và tải snapshot cùng tuyến.
+
+| Sự kiện | Dùng để |
+|---|---|
+| `TripChanged` | Tải lại snapshot chuyến, kể cả khi trạng thái thanh toán thay đổi. |
+| `DriverInvitation` | Tài xế tải chi tiết đề xuất và tuyến xem trước. |
+| `TripRoutePreview` | App khách nhận tuyến xem trước đón → đến. |
+| `TripRoutesUpdated` | Hai app cập nhật tuyến đúng chặng. |
+| `DriverLocationUpdated` | App khách di chuyển marker GPS của tài xế đang phục vụ chuyến. |
+| `RideCompleted` | Đã trả khách và bắt đầu xử lý thanh toán. |
 
 ## Chạy service bằng .NET trên máy
 
@@ -93,6 +120,14 @@ Khởi động dependency trước:
 ```powershell
 docker compose up -d postgres sqlserver sqlserver-init mongo rabbitmq
 ```
+
+Nếu chạy Matching trực tiếp trên host và cần cache tuyến, chạy Redis riêng với cổng chỉ mở ở localhost:
+
+```powershell
+docker run --rm -d --name swiftride-local-redis -p 127.0.0.1:6379:6379 redis:7-alpine
+```
+
+Trong terminal chạy Matching, đặt `$env:ConnectionStrings__RouteCache = '127.0.0.1:6379'` và `$env:Goong__ApiKey = $env:GOONG_API_KEY` sau khi nạp `. ./scripts/Import-DevEnvironment.ps1`.
 
 Sau đó chạy mỗi lệnh trong một terminal riêng:
 
@@ -204,17 +239,17 @@ Ngoài Development, bật OTP cố định hoặc seed sẽ làm ứng dụng t�
 | Database | Bảng/collection |
 |---|---|
 | AuthDB | users, roles, user_roles, otp_challenges, auth_sessions, refresh_tokens; legacy_driver_profiles là bản lưu chuyển đổi |
-| TripDB | trips, trip_status_history |
-| MatchingDB | driver_profiles, driver_availability, fare_quotes |
-| PaymentDB | payments, ledger_accounts, ledger_transactions, ledger_entries |
+| TripDB | trips, trip_proposals, trip_status_history, outbox_messages |
+| MatchingDB | driver_profiles, driver_availability, matching_jobs |
+| PaymentDB | payments, ledger_accounts, ledger_transactions, ledger_entries, outbox_messages |
 
-`roles` dùng `id` UUID làm khóa chính và tên `name` duy nhất. `user_roles` liên kết bằng `(user_id, role_id)`. Migration `AddRoleIds` chuyển dữ liệu tên role cũ sang ID, không tạo lại tài khoản hoặc xóa quyền đã gán. JWT/API vẫn trả tên role. Sơ đồ và giải thích từng cột nằm trong `docs/database/`; những thay đổi Trip/Matching trong sơ đồ vẫn là thiết kế đề xuất.
+`roles` dùng `id` UUID làm khóa chính và tên `name` duy nhất. `user_roles` liên kết bằng `(user_id, role_id)`. Migration `AddRoleIds` chuyển dữ liệu tên role cũ sang ID, không tạo lại tài khoản hoặc xóa quyền đã gán. JWT/API vẫn trả tên role. Sơ đồ trong `docs/database/` có thể khác schema hiện tại. Đối chiếu migration và cấu hình mapping khi cần tên cột chính xác.
 
-Auth giữ tên hiển thị khách hàng (`users.full_name`). Matching sở hữu tên tài xế riêng (`driver_profiles.legalName`), xe, vị trí/trạng thái và báo giá. Đổi tên khách không cập nhật tên tài xế. Tọa độ GeoJSON theo thứ tự **longitude, latitude**, có geospatial index. Giá Mongo dùng Decimal128; SQL dùng decimal/numeric. Quote hết hạn vẫn được giữ để tra cứu, không có TTL tự xóa.
+Auth giữ tên hiển thị khách. Matching sở hữu tên tài xế, xe, vị trí/trạng thái và công việc tích hợp. GeoJSON lưu **longitude, latitude**. Matching đã bỏ sử dụng `fare_quotes`. Collection cũ có thể còn trên môi trường đã chạy bản trước; hãy sao lưu dữ liệu lịch sử trước khi dọn.
 
 Database cũ cần chạy [hướng dẫn chuyển hồ sơ tài xế](docs/driver-profile-migration.md) khi nâng cấp. Migration giữ bản lưu `legacy_driver_profiles` trong AuthDB; công cụ sao chép và đối chiếu dữ liệu sang MongoDB. Không xóa volume để nâng cấp.
 
-Trip có các trường snapshot tên tài xế/xe khi nhận chuyến. Payment lưu cả rider/driver ID, idempotency key và sổ cái; không lưu thông tin thẻ. Chưa triển khai API ghi sổ, vì vậy việc kiểm tra cân bằng Debit/Credit sẽ thuộc transaction nghiệp vụ khi phát triển Payment.
+Migration `RiderAndFareSnapshots` thêm tên và SĐT khách tại lúc đặt xe, cùng quãng đường, thời gian và thông số tính giá trên đề xuất. Trip chỉ trả SĐT cho tài xế được gán khi đang phục vụ chuyến. Ảnh tài xế và ảnh xe là khóa ảnh có thể trống. Redis lưu polyline; TripDB lưu số liệu báo giá. Payment ghi sổ các giao dịch ví demo.
 
 Tạo/apply migration thủ công (PowerShell 7):
 
@@ -237,14 +272,26 @@ dotnet test SwiftRide.sln
 
 Mặc định HTTP integration tests dùng SQLite tạm, khóa ký riêng cho từng fixture; không ghi vào dữ liệu dev. Các kiểm thử cạnh tranh PostgreSQL được đánh dấu skip khi chưa có connection string.
 
-Chạy lại toàn bộ Auth tests trên PostgreSQL thật, gồm kiểm thử cạnh tranh:
+Chạy kiểm thử Auth trên PostgreSQL thật bằng script sau:
 
 ```powershell
 docker compose up -d postgres
 pwsh -File scripts/Test-Postgres.ps1
 ```
 
-Tests tạo schema riêng ngẫu nhiên trong AuthDB rồi dọn chính schema đó; không xóa dữ liệu ứng dụng. Kiểm tra migration, registration đồng thời, refresh đồng thời và OTP cooldown dùng PostgreSQL advisory transaction locks.
+Script tạo và dọn schema test riêng trong AuthDB. Để chạy thêm các ca Payment trên PostgreSQL thật, đặt `SWIFTRIDE_TEST_POSTGRES` trỏ tới database test có quyền tạo schema, rồi chạy `dotnet test tests/Payment.Tests`.
+
+Chạy các ca Matching với MongoDB và Redis cô lập. Ví dụ dùng cổng riêng để tránh đụng stack Development:
+
+```powershell
+docker run --rm -d --name swiftride-test-mongo -p 127.0.0.1:37017:27017 mongo:8.0
+docker run --rm -d --name swiftride-test-redis -p 127.0.0.1:36379:6379 redis:7-alpine
+$env:SWIFTRIDE_TEST_MONGO = 'mongodb://127.0.0.1:37017'
+$env:SWIFTRIDE_TEST_REDIS = '127.0.0.1:36379'
+dotnet test tests/Matching.Tests
+docker stop swiftride-test-mongo swiftride-test-redis
+Remove-Item Env:SWIFTRIDE_TEST_MONGO, Env:SWIFTRIDE_TEST_REDIS
+```
 
 Khi cả hệ thống đã chạy:
 
