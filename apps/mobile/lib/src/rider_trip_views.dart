@@ -31,15 +31,14 @@ class RiderTripPanel extends StatelessWidget {
   Widget build(BuildContext context) {
     final proposal = trip.currentProposal;
     final deadline = proposal?.responseDeadline;
-    final remaining = deadline == null
-        ? null
-        : deadline
-              .difference(now ?? DateTime.now())
-              .inSeconds
-              .clamp(0, 9999)
-              .toInt();
+    final remaining = deadline
+        ?.difference(now ?? DateTime.now())
+        .inSeconds
+        .clamp(0, 9999)
+        .toInt();
     final canReview = trip.status == TripStatus.awaitingRiderApproval;
-    final canCancel = trip.status == TripStatus.matching ||
+    final canCancel =
+        trip.status == TripStatus.matching ||
         trip.status == TripStatus.awaitingRiderApproval ||
         trip.status == TripStatus.awaitingDriverResponse ||
         trip.status == TripStatus.driverAccepted;
@@ -129,11 +128,11 @@ class RiderTripPanel extends StatelessWidget {
                         ),
                         Text(
                           [
-                            if (proposal.vehicleName?.isNotEmpty == true)
-                              proposal.vehicleName!,
-                            if (proposal.plateNumber?.isNotEmpty == true)
-                              proposal.plateNumber!,
-                          ].join(' · ').isEmpty
+                                if (proposal.vehicleName?.isNotEmpty == true)
+                                  proposal.vehicleName!,
+                                if (proposal.plateNumber?.isNotEmpty == true)
+                                  proposal.plateNumber!,
+                              ].join(' · ').isEmpty
                               ? 'Thông tin tài xế'
                               : [
                                   if (proposal.vehicleName?.isNotEmpty == true)
@@ -173,7 +172,8 @@ class RiderTripPanel extends StatelessWidget {
                 ],
               ),
             ],
-            if (trip.status == TripStatus.enRoute &&
+            if ((trip.status == TripStatus.enRoute ||
+                    trip.status == TripStatus.driverAccepted) &&
                 route?.pickupEtaMinutes != null) ...[
               const SizedBox(height: 12),
               _EtaBanner(
@@ -215,11 +215,7 @@ class RiderTripPanel extends StatelessWidget {
             ],
             const SizedBox(height: 14),
             if (canReview) ...[
-              _ActionButton(
-                label: 'Đồng ý',
-                busy: busy,
-                onPressed: onApprove,
-              ),
+              _ActionButton(label: 'Đồng ý', busy: busy, onPressed: onApprove),
               const SizedBox(height: 8),
               _ActionButton(
                 label: 'Từ chối',
@@ -255,7 +251,7 @@ class RiderTripPanel extends StatelessWidget {
               ),
             ] else if (trip.status == TripStatus.paymentPending) ...[
               _ActionButton(
-                label: 'Cập nhật trạng thái thanh toán',
+                label: 'Về trang chủ',
                 busy: busy,
                 outlined: true,
                 onPressed: onDismiss,
@@ -544,10 +540,7 @@ class _Countdown extends StatelessWidget {
     child: Text(
       '${(seconds ~/ 60).toString().padLeft(2, '0')}:'
       '${(seconds % 60).toString().padLeft(2, '0')}',
-      style: const TextStyle(
-        color: green,
-        fontWeight: FontWeight.w700,
-      ),
+      style: const TextStyle(color: green, fontWeight: FontWeight.w700),
     ),
   );
 }
@@ -672,11 +665,7 @@ class _StatusBadge extends StatelessWidget {
   Widget build(BuildContext context) {
     final (label, color, background) = switch (status) {
       TripStatus.paid => ('Đã thanh toán', green, const Color(0xFFE5F8EE)),
-      TripStatus.cancelled => (
-        'Đã hủy',
-        muted,
-        const Color(0xFFF0F2F4),
-      ),
+      TripStatus.cancelled => ('Đã hủy', muted, const Color(0xFFF0F2F4)),
       TripStatus.failed => (
         'Thất bại',
         const Color(0xFFB3261E),
@@ -697,7 +686,11 @@ class _StatusBadge extends StatelessWidget {
       ),
       child: Text(
         label,
-        style: TextStyle(fontSize: 10, color: color, fontWeight: FontWeight.w600),
+        style: TextStyle(
+          fontSize: 10,
+          color: color,
+          fontWeight: FontWeight.w600,
+        ),
       ),
     );
   }

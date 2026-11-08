@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
@@ -8,6 +9,21 @@ import 'dart:convert';
 import 'auth_test.dart' show MemoryStore, tokens, utf8Response;
 
 void main() {
+  TestWidgetsFlutterBinding.ensureInitialized();
+  setUp(() {
+    TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+        .setMockMethodCallHandler(
+          const MethodChannel('plugins.it_nomads.com/flutter_secure_storage'),
+          (_) async => null,
+        );
+  });
+  tearDown(() {
+    TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+        .setMockMethodCallHandler(
+          const MethodChannel('plugins.it_nomads.com/flutter_secure_storage'),
+          null,
+        );
+  });
   testWidgets(
     'Driver-only customer login offers Rider activation on the same phone',
     (tester) async {
@@ -15,6 +31,9 @@ void main() {
         role: AppRole.rider,
         store: MemoryStore(),
         client: MockClient((request) async {
+          if (request.url.path == '/api/trips/current') {
+            return http.Response('', 204);
+          }
           if (request.url.path == '/api/auth/login/request-otp') {
             return utf8Response('{"title":"rider_activation_required"}', 403);
           }

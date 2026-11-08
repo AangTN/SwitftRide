@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:math' show Point;
+import 'dart:ui' as ui;
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
@@ -22,6 +23,7 @@ class GoongMap extends StatefulWidget {
     this.pickupPoint,
     this.destinationPoint,
     this.driverPoint,
+    this.driverApproaching = false,
   });
 
   final bool interactive;
@@ -31,6 +33,7 @@ class GoongMap extends StatefulWidget {
   final LatLng? pickupPoint;
   final LatLng? destinationPoint;
   final LatLng? driverPoint;
+  final bool driverApproaching;
 
   @override
   State<GoongMap> createState() => GoongMapState();
@@ -50,6 +53,10 @@ class GoongMapState extends State<GoongMap> {
   Circle? _marker;
   Circle? _pulse;
   Line? _tripLine;
+  Symbol? _driverVehicle;
+  bool _vehicleIconReady = false;
+  bool _syncingTrip = false;
+  bool _tripSyncPending = false;
   final List<Circle> _tripMarkers = [];
   Timer? _pulseTimer;
   bool _reduceMotion = false;
@@ -75,7 +82,8 @@ class GoongMapState extends State<GoongMap> {
     if (!listEquals(oldWidget.routePoints, widget.routePoints) ||
         oldWidget.pickupPoint != widget.pickupPoint ||
         oldWidget.destinationPoint != widget.destinationPoint ||
-        oldWidget.driverPoint != widget.driverPoint) {
+        oldWidget.driverPoint != widget.driverPoint ||
+        oldWidget.driverApproaching != widget.driverApproaching) {
       _syncTripAnnotations();
     }
     if (!_samePoint(oldWidget.initialTarget, widget.initialTarget) &&
@@ -88,6 +96,11 @@ class GoongMapState extends State<GoongMap> {
   Future<void> _syncTripAnnotations() async {
     final controller = _controller;
     if (!_ready || controller == null) return;
+    if (_syncingTrip) {
+      _tripSyncPending = true;
+      return;
+    }
+    _syncingTrip = true;
     try {
       final oldLine = _tripLine;
       _tripLine = null;
@@ -96,6 +109,10 @@ class GoongMapState extends State<GoongMap> {
         await controller.removeCircle(marker);
       }
       _tripMarkers.clear();
+      if (_driverVehicle != null) {
+        await controller.removeSymbol(_driverVehicle!);
+        _driverVehicle = null;
+      }
       if (widget.routePoints.length > 1) {
         _tripLine = await controller.addLine(
           LineOptions(
@@ -107,11 +124,11 @@ class GoongMapState extends State<GoongMap> {
         );
       }
       for (final point in [
-        if (widget.pickupPoint != null)
-          (widget.pickupPoint!, '#00B650'),
+        if (widget.pickupPoint != null) (widget.pickupPoint!, '#00B650'),
         if (widget.destinationPoint != null)
           (widget.destinationPoint!, '#00B650'),
-        if (widget.driverPoint != null) (widget.driverPoint!, '#1687FF'),
+        if (widget.driverPoint != null && !widget.driverApproaching)
+          (widget.driverPoint!, '#00B650'),
       ]) {
         _tripMarkers.add(
           await controller.addCircle(
@@ -125,8 +142,58 @@ class GoongMapState extends State<GoongMap> {
           ),
         );
       }
+      if (widget.driverPoint != null && widget.driverApproaching) {
+        if (!_vehicleIconReady) {
+          final recorder = ui.PictureRecorder();
+          final canvas = Canvas(recorder);
+          canvas.drawCircle(
+            const Offset(32, 32),
+            30,
+            Paint()..color = Colors.white,
+          );
+          final painter = TextPainter(
+            text: TextSpan(
+              text: String.fromCharCode(Icons.two_wheeler_rounded.codePoint),
+              style: TextStyle(
+                fontFamily: Icons.two_wheeler_rounded.fontFamily,
+                fontSize: 46,
+                color: const Color(0xFF1687FF),
+              ),
+            ),
+            textDirection: TextDirection.ltr,
+          )..layout();
+          painter.paint(
+            canvas,
+            Offset((64 - painter.width) / 2, (64 - painter.height) / 2),
+          );
+          final picture = recorder.endRecording();
+          final image = await picture.toImage(64, 64);
+          final bytes = await image.toByteData(format: ui.ImageByteFormat.png);
+          await controller.addImage(
+            'swiftride-driver',
+            bytes!.buffer.asUint8List(),
+          );
+          painter.dispose();
+          image.dispose();
+          picture.dispose();
+          _vehicleIconReady = true;
+        }
+        _driverVehicle = await controller.addSymbol(
+          SymbolOptions(
+            geometry: widget.driverPoint,
+            iconImage: 'swiftride-driver',
+            iconSize: .6,
+          ),
+        );
+      }
     } catch (_) {
       // MapLibre can finish a style update after the platform view is disposed.
+    } finally {
+      _syncingTrip = false;
+      if (_tripSyncPending && mounted) {
+        _tripSyncPending = false;
+        unawaited(_syncTripAnnotations());
+      }
     }
   }
 
@@ -378,10 +445,9 @@ class GoongMapState extends State<GoongMap> {
     );
   }
 
-  bool _samePoint(LatLng? first, LatLng? second) =>
-      first == null
-          ? second == null
-          : second != null &&
-                first.latitude == second.latitude &&
-                first.longitude == second.longitude;
+  bool _samePoint(LatLng? first, LatLng? second) => first == null
+      ? second == null
+      : second != null &&
+            first.latitude == second.latitude &&
+            first.longitude == second.longitude;
 }

@@ -240,17 +240,20 @@ class TripRouteLeg {
     required this.polyline,
     required this.distanceMeters,
     required this.durationSeconds,
+    this.calculatedAt,
   });
 
   factory TripRouteLeg.fromJson(Map<String, dynamic> json) => TripRouteLeg(
     polyline: _string(json, 'polyline'),
     distanceMeters: _number(json, 'distanceMeters'),
     durationSeconds: _integer(json, 'durationSeconds'),
+    calculatedAt: _date(json['calculatedAt']),
   );
 
   final String polyline;
   final double distanceMeters;
   final int durationSeconds;
+  final DateTime? calculatedAt;
 
   List<LatLng> decode() {
     final points = <LatLng>[];
@@ -267,16 +270,17 @@ class TripRouteLeg {
       final longitudeDelta = _decodeValue(index);
       index = longitudeDelta.$2;
       longitude += longitudeDelta.$1;
-      final point = LatLng(latitude / 1e5, longitude / 1e5);
-      if (!point.latitude.isFinite ||
-          !point.longitude.isFinite ||
-          point.latitude < -90 ||
-          point.latitude > 90 ||
-          point.longitude < -180 ||
-          point.longitude > 180) {
+      final lat = latitude / 1e5;
+      final lon = longitude / 1e5;
+      if (!lat.isFinite ||
+          !lon.isFinite ||
+          lat < -90 ||
+          lat > 90 ||
+          lon < -180 ||
+          lon > 180) {
         throw const FormatException('Invalid route coordinate.');
       }
-      points.add(point);
+      points.add(LatLng(lat, lon));
     }
     return points;
   }
@@ -302,6 +306,11 @@ class TripRouteLeg {
 
 class TripRouteSnapshot {
   const TripRouteSnapshot({
+    required this.tripId,
+    required this.proposalId,
+    this.driverId,
+    this.stage,
+    this.stageVersion,
     this.toPickup,
     this.toDestination,
     this.pickupEtaMinutes,
@@ -309,14 +318,49 @@ class TripRouteSnapshot {
 
   factory TripRouteSnapshot.fromJson(Map<String, dynamic> json) =>
       TripRouteSnapshot(
+        tripId: _string(json, 'tripId'),
+        proposalId: _string(json, 'proposalId'),
+        driverId: _optionalString(json, 'driverId'),
+        stage: switch (json['stage']) {
+          0 || 'ToPickup' => 'ToPickup',
+          1 || 'ToDestination' => 'ToDestination',
+          null => null,
+          _ => throw const FormatException('Invalid route stage.'),
+        },
+        stageVersion: _optionalInteger(json, 'stageVersion'),
         toPickup: _optionalLeg(json['toPickup']),
         toDestination: _optionalLeg(json['toDestination']),
         pickupEtaMinutes: _optionalInteger(json, 'pickupEtaMinutes'),
       );
 
   final TripRouteLeg? toPickup;
+  final String tripId;
+  final String proposalId;
+  final String? driverId;
+  final String? stage;
+  final int? stageVersion;
   final TripRouteLeg? toDestination;
   final int? pickupEtaMinutes;
+
+  bool matches(TripSnapshot trip) {
+    if (tripId != trip.id || proposalId != trip.currentProposal?.id) {
+      return false;
+    }
+    return switch (trip.status) {
+      TripStatus.matching ||
+      TripStatus.awaitingRiderApproval ||
+      TripStatus.awaitingDriverResponse => stage == null,
+      TripStatus.driverAccepted || TripStatus.enRoute =>
+        stage == 'ToPickup' && stageVersion == 1 && driverId == trip.driverId,
+      TripStatus.pickedUp =>
+        stage == 'ToDestination' &&
+            stageVersion == 2 &&
+            driverId == trip.driverId,
+      _ => false,
+    };
+  }
+
+  DateTime? forTripTimestamp(TripSnapshot trip) => forTrip(trip)?.calculatedAt;
 
   TripRouteLeg? forTrip(TripSnapshot trip) =>
       trip.status == TripStatus.enRoute ||

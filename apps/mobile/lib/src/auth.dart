@@ -14,9 +14,10 @@ enum AppRole {
 }
 
 class AuthFailure implements Exception {
-  const AuthFailure(this.message, [this.code = 'unknown']);
+  const AuthFailure(this.message, [this.code = 'unknown', this.tripId]);
   final String message;
   final String code;
+  final String? tripId;
   @override
   String toString() => message;
 }
@@ -81,8 +82,8 @@ abstract interface class SessionStore {
 }
 
 class SecureSessionStore implements SessionStore {
-  SecureSessionStore(AppRole role)
-    : key = 'swiftride.${role.clientApp}.session';
+  SecureSessionStore(AppRole role, {String namespace = 'session'})
+    : key = 'swiftride.${role.clientApp}.$namespace';
   final String key;
   final FlutterSecureStorage storage = const FlutterSecureStorage();
   @override
@@ -463,10 +464,14 @@ class AuthApi {
       }
       if (response.statusCode >= 400) {
         String? code;
+        String? tripId;
         try {
           final error = jsonDecode(utf8.decode(response.bodyBytes));
           if (error is Map<String, dynamic> && error['title'] is String) {
             code = error['title'] as String;
+            tripId = error['tripId'] is String
+                ? error['tripId'] as String
+                : null;
           }
         } on FormatException {
           // Keep raw server responses out of user-facing messages.
@@ -477,6 +482,7 @@ class AuthApi {
               : _authenticatedMessages[code] ??
                     'Không thể hoàn tất yêu cầu. Vui lòng thử lại.',
           code ?? 'request_failed',
+          tripId,
         );
       }
       if (response.statusCode == 204 || response.bodyBytes.isEmpty) return null;
@@ -495,7 +501,8 @@ class AuthApi {
   }
 
   static const _authenticatedMessages = {
-    'address_not_found': 'Không tìm thấy địa điểm này. Vui lòng chọn kết quả khác.',
+    'address_not_found':
+        'Không tìm thấy địa điểm này. Vui lòng chọn kết quả khác.',
     'goong_not_configured': 'Dịch vụ địa điểm chưa được cấu hình.',
     'stale_trip_version': 'Trạng thái chuyến đã thay đổi. Vui lòng tải lại.',
     'trip_not_found': 'Không tìm thấy chuyến đi.',
@@ -503,7 +510,18 @@ class AuthApi {
     'proposal_not_actionable': 'Đề xuất này không còn hiệu lực.',
     'trip_forbidden': 'Bạn không có quyền thực hiện thao tác này.',
     'trip_route_unavailable': 'Chưa thể tải tuyến đường. Vui lòng thử lại.',
+    'active_trip_exists': 'Bạn đang có chuyến. Đang mở lại chuyến hiện tại.',
   };
+
+  Future<String> realtimeAccessToken() async {
+    if (session == null) throw const AuthFailure('Vui lòng đăng nhập lại.');
+    if (session!.expiresAt.isBefore(
+      DateTime.now().add(const Duration(seconds: 30)),
+    )) {
+      await _refresh();
+    }
+    return session!.accessToken;
+  }
 
   void dispose() => client.close();
 

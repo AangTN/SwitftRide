@@ -11,6 +11,7 @@ import 'places_api.dart';
 import 'auth.dart';
 import 'trip_api.dart';
 import 'trip_models.dart';
+import 'trip_realtime.dart';
 import 'rider_trip_views.dart';
 import 'package:maplibre_gl/maplibre_gl.dart';
 
@@ -21,6 +22,7 @@ class RiderHome extends StatefulWidget {
     required this.account,
     this.places,
     this.tripApi,
+    this.realtime,
     this.recentDestinations = const [],
   });
 
@@ -28,6 +30,7 @@ class RiderHome extends StatefulWidget {
   final Widget account;
   final PlaceLookup? places;
   final TripApi? tripApi;
+  final TripRealtimeClient? realtime;
   final List<RidePlace> recentDestinations;
 
   @override
@@ -35,7 +38,7 @@ class RiderHome extends StatefulWidget {
 }
 
 class _RiderHomeState extends State<RiderHome>
-    with SingleTickerProviderStateMixin {
+    with SingleTickerProviderStateMixin, WidgetsBindingObserver {
   final _map = GlobalKey<GoongMapState>();
   int _tab = 0;
   bool _mapBlocked = false;
@@ -47,10 +50,19 @@ class _RiderHomeState extends State<RiderHome>
   bool _historyLoading = false;
   bool _historyLoaded = false;
   bool _refreshingTrip = false;
-  bool _refreshingRoute = false;
   String? _tripError;
   String? _historyError;
-  String? _pendingIdempotencyKey;
+  PendingTripBooking? _pendingBooking;
+  bool _restoring = true;
+  bool _restoreInFlight = false;
+  bool _restoreFailed = false;
+  bool _refreshAgain = false;
+  TripRealtimeClient? _realtime;
+  StreamSubscription<TripRealtimeEvent>? _realtimeSubscription;
+  String? _watchedTripId;
+  LatLng? _driverPoint;
+  DateTime? _driverRecordedAt;
+  bool _realtimeDisconnected = false;
   Timer? _tripTicker;
   DateTime _now = DateTime.now();
   late final _panelAnimation = AnimationController(
@@ -62,7 +74,6 @@ class _RiderHomeState extends State<RiderHome>
   RidePlace? _destination;
   RideVehicleType _vehicleType = RideVehicleType.motorcycle;
   RidePaymentMethod _paymentMethod = RidePaymentMethod.swiftRideWallet;
-  int _tickerSeconds = 0;
   bool get _hasRecent => widget.recentDestinations.isNotEmpty;
   List<RidePlace> get _places =>
       _hasRecent ? widget.recentDestinations : suggestedDestinations;
@@ -79,153 +90,303 @@ class _RiderHomeState extends State<RiderHome>
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
+    _realtime = widget.realtime ?? widget.tripApi?.createRealtime();
+    _realtimeSubscription = _realtime?.events.listen(_onRealtime);
     unawaited(_restoreTrip());
     _tripTicker = Timer.periodic(const Duration(seconds: 1), (_) {
-      if (!mounted || _currentTrip == null) return;
-      _now = DateTime.now();
-      _tickerSeconds++;
-      if (_tickerSeconds % 5 == 0) unawaited(_refreshTrip());
-      setState(() {});
+      if (mounted && _currentTrip != null) {
+        setState(() => _now = DateTime.now());
+      }
     });
   }
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     _tripTicker?.cancel();
+    unawaited(_realtimeSubscription?.cancel());
+    unawaited(_realtime?.dispose());
     _panelAnimation.dispose();
     super.dispose();
   }
 
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) {
+      unawaited(_currentTrip == null ? _restoreTrip() : _refreshTrip());
+    }
+  }
+
+  Future<void> _watchTrip(String? id) async {
+    if (_watchedTripId == id) return;
+    _watchedTripId = id;
+    await _realtime?.watch(id);
+  }
+
+  bool _adoptTrip(TripSnapshot trip) {
+    if (!mounted) return false;
+    final previous = _currentTrip;
+    if (previous?.id == trip.id && previous!.stateVersion > trip.stateVersion) {
+      return false;
+    }
+    setState(() {
+      _currentTrip = trip;
+      if (_tripRoute?.matches(trip) != true) {
+        _tripRoute = null;
+        _routePoints = const [];
+      }
+      if (previous?.id != trip.id ||
+          previous?.driverId != trip.driverId ||
+          !{
+            TripStatus.driverAccepted,
+            TripStatus.enRoute,
+            TripStatus.pickedUp,
+          }.contains(trip.status)) {
+        _driverPoint = null;
+        _driverRecordedAt = null;
+      }
+      _tripError = null;
+    });
+    unawaited(_watchTrip(trip.status.isActive ? trip.id : null));
+    return true;
+  }
+
+  void _onRealtime(TripRealtimeEvent event) {
+    if (!mounted) return;
+    if (event.name == 'connected' || event.name == 'disconnected') {
+      setState(() => _realtimeDisconnected = event.name == 'disconnected');
+      if (event.name == 'connected') unawaited(_refreshTrip());
+      return;
+    }
+    final trip = _currentTrip;
+    final data = event.data;
+    if (trip == null || data['tripId'] != trip.id) return;
+    if (event.name == 'DriverLocationUpdated') {
+      final time = DateTime.tryParse(data['recordedAt']?.toString() ?? '');
+      final lat = data['latitude'];
+      final lon = data['longitude'];
+      if (data['proposalId'] != trip.currentProposal?.id ||
+          data['driverId'] != trip.driverId ||
+          !{
+            TripStatus.driverAccepted,
+            TripStatus.enRoute,
+            TripStatus.pickedUp,
+          }.contains(trip.status) ||
+          time == null ||
+          (_driverRecordedAt != null && !time.isAfter(_driverRecordedAt!)) ||
+          lat is! num ||
+          lon is! num ||
+          !lat.isFinite ||
+          !lon.isFinite ||
+          lat < -90 ||
+          lat > 90 ||
+          lon < -180 ||
+          lon > 180) {
+        return;
+      }
+      setState(() {
+        _driverPoint = LatLng(lat.toDouble(), lon.toDouble());
+        _driverRecordedAt = time;
+      });
+    } else if (event.name == 'TripRoutePreview' ||
+        event.name == 'TripRoutesUpdated') {
+      try {
+        final route = TripRouteSnapshot.fromJson(data);
+        if (!_applyRoute(route, trip)) unawaited(_refreshTrip());
+      } on FormatException {
+        unawaited(_refreshRoute(trip));
+      }
+    } else if (event.name == 'TripChanged' || event.name == 'RideCompleted') {
+      if (data['stateVersion'] is int &&
+          (data['stateVersion'] as int) < trip.stateVersion) {
+        return;
+      }
+      unawaited(_refreshTrip());
+    }
+  }
+
+  bool _applyRoute(TripRouteSnapshot route, TripSnapshot trip) {
+    final current = _currentTrip;
+    if (!mounted ||
+        current == null ||
+        current.id != trip.id ||
+        !route.matches(current)) {
+      return false;
+    }
+    final previousTime = _tripRoute?.forTripTimestamp(current);
+    final time = route.forTripTimestamp(current);
+    if (previousTime != null && (time == null || time.isBefore(previousTime))) {
+      return false;
+    }
+    final points = route.forTrip(current)?.decode() ?? const <LatLng>[];
+    setState(() {
+      _tripRoute = route;
+      _routePoints = current.status == TripStatus.matching ? const [] : points;
+    });
+    return true;
+  }
+
   Future<void> _restoreTrip() async {
+    if (_tripBusy || _restoreInFlight) return;
+    _restoreInFlight = true;
     final api = widget.tripApi;
-    if (api == null) return;
+    if (api == null) {
+      _restoreInFlight = false;
+      if (mounted) setState(() => _restoring = false);
+      return;
+    }
+    if (mounted) {
+      setState(() {
+        _restoring = true;
+        _restoreFailed = false;
+      });
+    }
     try {
+      _pendingBooking = await api.readPending();
       final trip = await api.current();
       if (!mounted) return;
-      setState(() {
-        _currentTrip = trip;
-        _tripError = null;
-      });
-      if (trip != null) await _refreshRoute(trip);
-    } on AuthFailure catch (error) {
-      if (mounted) setState(() => _tripError = error.message);
+      if (trip != null && _adoptTrip(trip)) await _refreshRoute(trip);
+    } catch (_) {
+      if (mounted) {
+        setState(() {
+          _restoreFailed = true;
+          _tripError = 'Chưa kiểm tra được chuyến đang có. Vui lòng thử lại.';
+        });
+      }
+    } finally {
+      _restoreInFlight = false;
+      if (mounted) setState(() => _restoring = false);
     }
   }
 
   Future<void> _refreshTrip() async {
     final api = widget.tripApi;
     final current = _currentTrip;
-    if (api == null || current == null || _refreshingTrip) return;
-    _refreshingTrip = true;
-    TripSnapshot trip;
-    try {
-      trip = await api.get(current.id);
-      if (!mounted || _currentTrip?.id != current.id) return;
-      setState(() {
-        _currentTrip = trip;
-        _tripError = null;
-      });
-    } on AuthFailure catch (error) {
-      if (mounted) setState(() => _tripError = error.message);
+    if (api == null || current == null) return;
+    if (_refreshingTrip) {
+      _refreshAgain = true;
       return;
+    }
+    _refreshingTrip = true;
+    try {
+      final trip = await api.get(current.id);
+      if (!mounted || _currentTrip?.id != current.id) return;
+      if (_adoptTrip(trip) &&
+          trip.status.isActive &&
+          trip.status != TripStatus.paymentPending &&
+          trip.status != TripStatus.droppedOff) {
+        await _refreshRoute(trip);
+      }
+    } on AuthFailure catch (error) {
+      if (mounted && _currentTrip?.id == current.id) {
+        setState(() => _tripError = error.message);
+      }
     } finally {
       _refreshingTrip = false;
-    }
-    if (!mounted || _currentTrip?.id != current.id) return;
-    if (trip.status.isActive &&
-        trip.status != TripStatus.paymentPending &&
-        trip.status != TripStatus.droppedOff) {
-      await _refreshRoute(trip);
-    } else {
-      setState(() {
-        _tripRoute = null;
-        _routePoints = const [];
-      });
+      if (_refreshAgain && mounted) {
+        _refreshAgain = false;
+        unawaited(_refreshTrip());
+      }
     }
   }
 
   Future<void> _refreshRoute(TripSnapshot trip) async {
     final api = widget.tripApi;
-    if (api == null || !trip.status.isActive || _refreshingRoute) return;
-    _refreshingRoute = true;
+    if (api == null || !trip.status.isActive) return;
+    // Responses are checked against the current proposal, phase and timestamp.
     try {
       final route = await api.route(trip.id);
-      final points = route?.forTrip(trip)?.decode() ?? const <LatLng>[];
-      if (!mounted || _currentTrip?.id != trip.id) return;
-      setState(() {
-        _tripRoute = route;
-        _routePoints = points;
-        _tripError = null;
-      });
-    } on AuthFailure catch (error) {
-      if (mounted) setState(() => _tripError = error.message);
+      if (route != null) _applyRoute(route, trip);
+    } on AuthFailure {
+      // Keep the most recent route while recovering from a temporary failure.
     } on FormatException {
-      if (mounted) {
-        setState(() {
-          _tripRoute = null;
-          _routePoints = const [];
-          _tripError = 'Dữ liệu tuyến đường không hợp lệ.';
-        });
+      if (mounted && _currentTrip?.id == trip.id) {
+        setState(() => _tripError = 'Dữ liệu tuyến đường không hợp lệ.');
       }
-    } finally {
-      _refreshingRoute = false;
     }
   }
 
   Future<void> _createTrip() async {
     final api = widget.tripApi;
-    final destination = _destination;
-    if (api == null || destination == null) return;
-    if (!_pickup.isResolved || !destination.isResolved) {
-      _showMessage('Vui lòng chọn điểm đón và điểm đến từ kết quả tìm kiếm.');
+    if (api == null ||
+        _tripBusy ||
+        _restoring ||
+        _restoreFailed ||
+        _currentTrip != null) {
       return;
+    }
+    if (_pendingBooking == null) {
+      final destination = _destination;
+      if (destination == null ||
+          !_pickup.isResolved ||
+          !destination.isResolved) {
+        return;
+      }
+      _pendingBooking = PendingTripBooking(
+        newIdempotencyKey(),
+        RideLocations(
+          _pickup,
+          destination,
+          _vehicleType,
+          _paymentMethod,
+        ).toTripRequest(),
+      );
     }
     setState(() {
       _tripBusy = true;
       _tripError = null;
-      _pendingIdempotencyKey ??= newIdempotencyKey();
     });
     try {
-      final request = RideLocations(
-        _pickup,
-        destination,
-        _vehicleType,
-        _paymentMethod,
-      ).toTripRequest();
-      final trip = await api.createTrip(
-        request: request,
-        idempotencyKey: _pendingIdempotencyKey!,
-      );
+      final pending = _pendingBooking!;
+      await api.savePending(pending);
+      TripSnapshot trip;
+      try {
+        trip = await api.createTrip(
+          request: pending.request,
+          idempotencyKey: pending.key,
+        );
+      } on AuthFailure catch (error) {
+        if (error.code != 'active_trip_exists') rethrow;
+        final active = error.tripId == null
+            ? await api.current()
+            : await api.get(error.tripId!);
+        if (active == null) rethrow;
+        trip = active;
+      }
+      await api.clearPending();
       if (!mounted) return;
-      setState(() {
-        _currentTrip = trip;
-        _pendingIdempotencyKey = null;
-      });
-      await _refreshRoute(trip);
+      _pendingBooking = null;
+      if (_adoptTrip(trip)) await _refreshRoute(trip);
     } on AuthFailure catch (error) {
       if (mounted) setState(() => _tripError = error.message);
+    } catch (_) {
+      if (mounted) {
+        setState(
+          () => _tripError =
+              'Chưa xác nhận được yêu cầu đặt xe. Vui lòng thử lại yêu cầu cũ.',
+        );
+      }
     } finally {
       if (mounted) setState(() => _tripBusy = false);
     }
   }
 
-  Future<void> _runTripAction(
-    Future<TripSnapshot> Function() action,
-  ) async {
+  Future<void> _runTripAction(Future<TripSnapshot> Function() action) async {
     if (_tripBusy) return;
+    final id = _currentTrip?.id;
     setState(() {
       _tripBusy = true;
       _tripError = null;
     });
     try {
       final trip = await action();
-      if (!mounted) return;
-      setState(() => _currentTrip = trip);
-      await _refreshRoute(trip);
+      if (!mounted || _currentTrip?.id != id) return;
+      if (_adoptTrip(trip)) await _refreshRoute(trip);
     } on AuthFailure catch (error) {
-      if (mounted) {
+      if (mounted && _currentTrip?.id == id) {
         setState(() => _tripError = error.message);
-        if (error.code == 'stale_trip_version') await _refreshTrip();
+        await _refreshTrip();
       }
     } finally {
       if (mounted) setState(() => _tripBusy = false);
@@ -233,26 +394,26 @@ class _RiderHomeState extends State<RiderHome>
   }
 
   Future<void> _approveProposal() async {
-    final api = widget.tripApi;
     final trip = _currentTrip;
     final proposal = trip?.currentProposal;
-    if (api == null || trip == null || proposal == null) return;
-    await _runTripAction(() => api.approve(trip, proposal));
+    if (widget.tripApi != null && trip != null && proposal != null) {
+      await _runTripAction(() => widget.tripApi!.approve(trip, proposal));
+    }
   }
 
   Future<void> _rejectProposal() async {
-    final api = widget.tripApi;
     final trip = _currentTrip;
     final proposal = trip?.currentProposal;
-    if (api == null || trip == null || proposal == null) return;
-    await _runTripAction(() => api.reject(trip, proposal));
+    if (widget.tripApi != null && trip != null && proposal != null) {
+      await _runTripAction(() => widget.tripApi!.reject(trip, proposal));
+    }
   }
 
   Future<void> _cancelTrip() async {
-    final api = widget.tripApi;
     final trip = _currentTrip;
-    if (api == null || trip == null) return;
-    await _runTripAction(() => api.cancel(trip));
+    if (widget.tripApi != null && trip != null) {
+      await _runTripAction(() => widget.tripApi!.cancel(trip));
+    }
   }
 
   Future<void> _loadHistory() async {
@@ -299,7 +460,8 @@ class _RiderHomeState extends State<RiderHome>
       _tripError = null;
       _tab = paid ? 1 : 0;
     });
-    if (paid) unawaited(_loadHistory());
+    unawaited(_watchTrip(null));
+    unawaited(_loadHistory());
   }
 
   void _showTripDetails(TripSnapshot trip) {
@@ -329,6 +491,12 @@ class _RiderHomeState extends State<RiderHome>
   }
 
   Future<void> _selectLocations({RidePlace? destination}) async {
+    if (_tripBusy || _restoring || _restoreFailed || _pendingBooking != null) {
+      _showMessage(
+        'Vui lòng kiểm tra lại yêu cầu đặt xe đang chờ trước khi đổi địa chỉ.',
+      );
+      return;
+    }
     final result = await _withMapPaused(
       () => showModalBottomSheet<RideLocations>(
         context: context,
@@ -457,6 +625,10 @@ class _RiderHomeState extends State<RiderHome>
           child: GoongMap(
             key: _map,
             routePoints: _routePoints,
+            driverPoint: _driverPoint,
+            driverApproaching:
+                trip.status == TripStatus.driverAccepted ||
+                trip.status == TripStatus.enRoute,
             initialTarget: mapCenter,
             initialZoom: 12.5,
             pickupPoint: LatLng(trip.pickupLatitude, trip.pickupLongitude),
@@ -487,14 +659,16 @@ class _RiderHomeState extends State<RiderHome>
             trip: trip,
             route: _tripRoute,
             busy: _tripBusy,
-            error: _tripError,
+            error:
+                _tripError ??
+                (_realtimeDisconnected
+                    ? 'Mất kết nối cập nhật trực tiếp. Đang kết nối lại…'
+                    : null),
             now: _now,
             onApprove: _approveProposal,
             onReject: _rejectProposal,
             onCancel: _cancelTrip,
-            onDismiss: trip.status == TripStatus.paymentPending
-                ? _refreshTrip
-                : _dismissTrip,
+            onDismiss: _dismissTrip,
           ),
         ),
       ],
@@ -502,7 +676,8 @@ class _RiderHomeState extends State<RiderHome>
   }
 
   Widget _bookingAction() {
-    if (_destination == null || widget.tripApi == null) {
+    if (widget.tripApi == null ||
+        (_destination == null && _pendingBooking == null)) {
       return const SizedBox.shrink();
     }
     return Padding(
@@ -510,11 +685,22 @@ class _RiderHomeState extends State<RiderHome>
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
+          if (_pendingBooking != null)
+            Padding(
+              padding: const EdgeInsets.only(bottom: 8),
+              child: Text(
+                'Yêu cầu đang chờ xác nhận: ${_pendingBooking!.request['pickupAddress']} → '
+                '${_pendingBooking!.request['destinationAddress']}. Thử lại để kiểm tra trước khi đặt chuyến khác.',
+                style: const TextStyle(fontSize: 12, color: muted),
+              ),
+            ),
           SizedBox(
             height: 46,
             child: FilledButton.icon(
               key: const Key('request-trip'),
-              onPressed: _tripBusy ? null : _createTrip,
+              onPressed: _tripBusy || _restoring || _restoreFailed
+                  ? null
+                  : _createTrip,
               icon: _tripBusy
                   ? const SizedBox(
                       width: 18,
@@ -525,7 +711,13 @@ class _RiderHomeState extends State<RiderHome>
                       ),
                     )
                   : const Icon(Icons.local_taxi_rounded),
-              label: Text(_tripBusy ? 'Đang gửi yêu cầu...' : 'Đặt chuyến'),
+              label: Text(
+                _tripBusy
+                    ? 'Đang gửi yêu cầu...'
+                    : _pendingBooking != null
+                    ? 'Thử lại yêu cầu đặt xe'
+                    : 'Đặt chuyến',
+              ),
               style: FilledButton.styleFrom(
                 backgroundColor: green,
                 shape: RoundedRectangleBorder(
@@ -540,10 +732,7 @@ class _RiderHomeState extends State<RiderHome>
               child: Text(
                 _tripError!,
                 key: const Key('trip-error'),
-                style: const TextStyle(
-                  color: Color(0xFFB3261E),
-                  fontSize: 12,
-                ),
+                style: const TextStyle(color: Color(0xFFB3261E), fontSize: 12),
               ),
             ),
         ],
@@ -689,7 +878,7 @@ class _RiderHomeState extends State<RiderHome>
           ),
           if (_tripError != null &&
               _currentTrip == null &&
-              _destination == null)
+              (_destination == null || _restoreFailed))
             Positioned(
               top: 76,
               left: 16,

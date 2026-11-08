@@ -1,12 +1,39 @@
 import 'dart:math';
+import 'dart:convert';
 
 import 'auth.dart';
 import 'trip_models.dart';
+import 'trip_realtime.dart';
 
 class TripApi {
-  const TripApi(this.auth);
+  TripApi(this.auth, {SessionStore? pendingStore})
+    : _pendingStore = pendingStore;
 
   final AuthApi auth;
+  final SessionStore? _pendingStore;
+  SessionStore get pendingStore =>
+      _pendingStore ??
+      SecureSessionStore(
+        AppRole.rider,
+        namespace: 'booking.${auth.session?.user.phone ?? "anonymous"}',
+      );
+
+  TripRealtimeClient createRealtime() => SignalRTripRealtime(auth);
+
+  Future<PendingTripBooking?> readPending() async {
+    final value = await pendingStore.read();
+    if (value == null) return null;
+    final data = jsonDecode(value) as Map<String, dynamic>;
+    return PendingTripBooking(
+      data['key'] as String,
+      Map<String, Object>.from(data['request'] as Map),
+    );
+  }
+
+  Future<void> savePending(PendingTripBooking pending) => pendingStore.write(
+    jsonEncode({'key': pending.key, 'request': pending.request}),
+  );
+  Future<void> clearPending() => pendingStore.clear();
 
   Future<TripSnapshot> createTrip({
     required Map<String, Object> request,
@@ -97,6 +124,13 @@ class TripApi {
   }
 }
 
+class PendingTripBooking {
+  PendingTripBooking(this.key, Map<String, Object> request)
+    : request = Map.unmodifiable(request);
+  final String key;
+  final Map<String, Object> request;
+}
+
 class TripHistoryPage {
   const TripHistoryPage({required this.total, required this.items});
 
@@ -109,7 +143,9 @@ String newIdempotencyKey() {
   final bytes = List<int>.generate(16, (_) => random.nextInt(256));
   bytes[6] = (bytes[6] & 0x0f) | 0x40;
   bytes[8] = (bytes[8] & 0x3f) | 0x80;
-  final hex = bytes.map((byte) => byte.toRadixString(16).padLeft(2, '0')).join();
+  final hex = bytes
+      .map((byte) => byte.toRadixString(16).padLeft(2, '0'))
+      .join();
   return '${hex.substring(0, 8)}-${hex.substring(8, 12)}-'
       '${hex.substring(12, 16)}-${hex.substring(16, 20)}-${hex.substring(20)}';
 }
