@@ -1,11 +1,18 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter/gestures.dart';
 import 'package:pointer_interceptor/pointer_interceptor.dart';
 
-import 'app.dart' show Brand, green, ink, mint, muted;
+import 'app.dart' show Brand, green, ink, muted;
 import 'goong_map.dart';
 import 'ride_locations.dart';
 import 'places_api.dart';
+import 'auth.dart';
+import 'trip_api.dart';
+import 'trip_models.dart';
+import 'rider_trip_views.dart';
+import 'package:maplibre_gl/maplibre_gl.dart';
 
 class RiderHome extends StatefulWidget {
   const RiderHome({
@@ -13,12 +20,14 @@ class RiderHome extends StatefulWidget {
     required this.fullName,
     required this.account,
     this.places,
+    this.tripApi,
     this.recentDestinations = const [],
   });
 
   final String fullName;
   final Widget account;
   final PlaceLookup? places;
+  final TripApi? tripApi;
   final List<RidePlace> recentDestinations;
 
   @override
@@ -30,6 +39,20 @@ class _RiderHomeState extends State<RiderHome>
   final _map = GlobalKey<GoongMapState>();
   int _tab = 0;
   bool _mapBlocked = false;
+  TripSnapshot? _currentTrip;
+  TripRouteSnapshot? _tripRoute;
+  List<LatLng> _routePoints = const [];
+  final List<TripSnapshot> _history = [];
+  bool _tripBusy = false;
+  bool _historyLoading = false;
+  bool _historyLoaded = false;
+  bool _refreshingTrip = false;
+  bool _refreshingRoute = false;
+  String? _tripError;
+  String? _historyError;
+  String? _pendingIdempotencyKey;
+  Timer? _tripTicker;
+  DateTime _now = DateTime.now();
   late final _panelAnimation = AnimationController(
     vsync: this,
     value: 1,
@@ -38,7 +61,8 @@ class _RiderHomeState extends State<RiderHome>
   RidePlace _pickup = defaultPickup;
   RidePlace? _destination;
   RideVehicleType _vehicleType = RideVehicleType.motorcycle;
-  RidePaymentMethod _paymentMethod = RidePaymentMethod.cash;
+  RidePaymentMethod _paymentMethod = RidePaymentMethod.swiftRideWallet;
+  int _tickerSeconds = 0;
   bool get _hasRecent => widget.recentDestinations.isNotEmpty;
   List<RidePlace> get _places =>
       _hasRecent ? widget.recentDestinations : suggestedDestinations;
@@ -53,9 +77,245 @@ class _RiderHomeState extends State<RiderHome>
   }
 
   @override
+  void initState() {
+    super.initState();
+    unawaited(_restoreTrip());
+    _tripTicker = Timer.periodic(const Duration(seconds: 1), (_) {
+      if (!mounted || _currentTrip == null) return;
+      _now = DateTime.now();
+      _tickerSeconds++;
+      if (_tickerSeconds % 5 == 0) unawaited(_refreshTrip());
+      setState(() {});
+    });
+  }
+
+  @override
   void dispose() {
+    _tripTicker?.cancel();
     _panelAnimation.dispose();
     super.dispose();
+  }
+
+  Future<void> _restoreTrip() async {
+    final api = widget.tripApi;
+    if (api == null) return;
+    try {
+      final trip = await api.current();
+      if (!mounted) return;
+      setState(() {
+        _currentTrip = trip;
+        _tripError = null;
+      });
+      if (trip != null) await _refreshRoute(trip);
+    } on AuthFailure catch (error) {
+      if (mounted) setState(() => _tripError = error.message);
+    }
+  }
+
+  Future<void> _refreshTrip() async {
+    final api = widget.tripApi;
+    final current = _currentTrip;
+    if (api == null || current == null || _refreshingTrip) return;
+    _refreshingTrip = true;
+    TripSnapshot trip;
+    try {
+      trip = await api.get(current.id);
+      if (!mounted || _currentTrip?.id != current.id) return;
+      setState(() {
+        _currentTrip = trip;
+        _tripError = null;
+      });
+    } on AuthFailure catch (error) {
+      if (mounted) setState(() => _tripError = error.message);
+      return;
+    } finally {
+      _refreshingTrip = false;
+    }
+    if (!mounted || _currentTrip?.id != current.id) return;
+    if (trip.status.isActive &&
+        trip.status != TripStatus.paymentPending &&
+        trip.status != TripStatus.droppedOff) {
+      await _refreshRoute(trip);
+    } else {
+      setState(() {
+        _tripRoute = null;
+        _routePoints = const [];
+      });
+    }
+  }
+
+  Future<void> _refreshRoute(TripSnapshot trip) async {
+    final api = widget.tripApi;
+    if (api == null || !trip.status.isActive || _refreshingRoute) return;
+    _refreshingRoute = true;
+    try {
+      final route = await api.route(trip.id);
+      final points = route?.forTrip(trip)?.decode() ?? const <LatLng>[];
+      if (!mounted || _currentTrip?.id != trip.id) return;
+      setState(() {
+        _tripRoute = route;
+        _routePoints = points;
+        _tripError = null;
+      });
+    } on AuthFailure catch (error) {
+      if (mounted) setState(() => _tripError = error.message);
+    } on FormatException {
+      if (mounted) {
+        setState(() {
+          _tripRoute = null;
+          _routePoints = const [];
+          _tripError = 'Dữ liệu tuyến đường không hợp lệ.';
+        });
+      }
+    } finally {
+      _refreshingRoute = false;
+    }
+  }
+
+  Future<void> _createTrip() async {
+    final api = widget.tripApi;
+    final destination = _destination;
+    if (api == null || destination == null) return;
+    if (!_pickup.isResolved || !destination.isResolved) {
+      _showMessage('Vui lòng chọn điểm đón và điểm đến từ kết quả tìm kiếm.');
+      return;
+    }
+    setState(() {
+      _tripBusy = true;
+      _tripError = null;
+      _pendingIdempotencyKey ??= newIdempotencyKey();
+    });
+    try {
+      final request = RideLocations(
+        _pickup,
+        destination,
+        _vehicleType,
+        _paymentMethod,
+      ).toTripRequest();
+      final trip = await api.createTrip(
+        request: request,
+        idempotencyKey: _pendingIdempotencyKey!,
+      );
+      if (!mounted) return;
+      setState(() {
+        _currentTrip = trip;
+        _pendingIdempotencyKey = null;
+      });
+      await _refreshRoute(trip);
+    } on AuthFailure catch (error) {
+      if (mounted) setState(() => _tripError = error.message);
+    } finally {
+      if (mounted) setState(() => _tripBusy = false);
+    }
+  }
+
+  Future<void> _runTripAction(
+    Future<TripSnapshot> Function() action,
+  ) async {
+    if (_tripBusy) return;
+    setState(() {
+      _tripBusy = true;
+      _tripError = null;
+    });
+    try {
+      final trip = await action();
+      if (!mounted) return;
+      setState(() => _currentTrip = trip);
+      await _refreshRoute(trip);
+    } on AuthFailure catch (error) {
+      if (mounted) {
+        setState(() => _tripError = error.message);
+        if (error.code == 'stale_trip_version') await _refreshTrip();
+      }
+    } finally {
+      if (mounted) setState(() => _tripBusy = false);
+    }
+  }
+
+  Future<void> _approveProposal() async {
+    final api = widget.tripApi;
+    final trip = _currentTrip;
+    final proposal = trip?.currentProposal;
+    if (api == null || trip == null || proposal == null) return;
+    await _runTripAction(() => api.approve(trip, proposal));
+  }
+
+  Future<void> _rejectProposal() async {
+    final api = widget.tripApi;
+    final trip = _currentTrip;
+    final proposal = trip?.currentProposal;
+    if (api == null || trip == null || proposal == null) return;
+    await _runTripAction(() => api.reject(trip, proposal));
+  }
+
+  Future<void> _cancelTrip() async {
+    final api = widget.tripApi;
+    final trip = _currentTrip;
+    if (api == null || trip == null) return;
+    await _runTripAction(() => api.cancel(trip));
+  }
+
+  Future<void> _loadHistory() async {
+    final api = widget.tripApi;
+    if (api == null || _historyLoading) return;
+    setState(() {
+      _historyLoading = true;
+      _historyError = null;
+    });
+    try {
+      final page = await api.history();
+      if (mounted) {
+        setState(() {
+          _history
+            ..clear()
+            ..addAll(page.items);
+          _historyLoaded = true;
+        });
+      }
+    } on AuthFailure catch (error) {
+      if (mounted) setState(() => _historyError = error.message);
+    } finally {
+      if (mounted) setState(() => _historyLoading = false);
+    }
+  }
+
+  void _selectTab(int index) {
+    setState(() => _tab = index);
+    if (index == 1 && !_historyLoaded) unawaited(_loadHistory());
+  }
+
+  void _showMessage(String message) {
+    ScaffoldMessenger.of(context)
+      ..hideCurrentSnackBar()
+      ..showSnackBar(SnackBar(content: Text(message)));
+  }
+
+  void _dismissTrip() {
+    final paid = _currentTrip?.status == TripStatus.paid;
+    setState(() {
+      _currentTrip = null;
+      _tripRoute = null;
+      _routePoints = const [];
+      _tripError = null;
+      _tab = paid ? 1 : 0;
+    });
+    if (paid) unawaited(_loadHistory());
+  }
+
+  void _showTripDetails(TripSnapshot trip) {
+    showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      showDragHandle: true,
+      backgroundColor: Colors.white,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(26)),
+      ),
+      builder: (context) => ConstrainedBox(
+        constraints: const BoxConstraints(maxWidth: 430),
+        child: RiderTripDetailsSheet(trip: trip),
+      ),
+    );
   }
 
   Future<T?> _withMapPaused<T>(Future<T?> Function() openPanel) async {
@@ -107,6 +367,7 @@ class _RiderHomeState extends State<RiderHome>
       _vehicleType = result.vehicleType;
       _paymentMethod = result.paymentMethod;
     });
+    _panelAnimation.animateTo(1, curve: Curves.easeOutCubic);
     final point = result.destination.point;
     if (point != null) _map.currentState?.focus(point);
   }
@@ -117,24 +378,13 @@ class _RiderHomeState extends State<RiderHome>
     body: IndexedStack(
       index: _tab,
       children: [
-        _home(),
-        const SafeArea(
-          child: Center(
-            child: _EmptyPanel(
-              icon: Icons.history_rounded,
-              title: 'Chuyến đi',
-              message: 'Lịch sử chuyến đi sẽ xuất hiện tại đây.',
-            ),
-          ),
-        ),
-        const SafeArea(
-          child: Center(
-            child: _EmptyPanel(
-              icon: Icons.account_balance_wallet_outlined,
-              title: 'Ví của tôi',
-              message: 'Thông tin ví sẽ được cập nhật sau.',
-            ),
-          ),
+        _currentTrip == null ? _home() : _activeTrip(),
+        RiderTripHistory(
+          trips: _history,
+          loading: _historyLoading,
+          error: _historyError,
+          onRetry: _loadHistory,
+          onSelected: _showTripDetails,
         ),
         SingleChildScrollView(child: widget.account),
       ],
@@ -159,8 +409,7 @@ class _RiderHomeState extends State<RiderHome>
             children: [
               _nav(0, Icons.home_rounded, 'Trang chủ'),
               _nav(1, Icons.history_rounded, 'Chuyến đi'),
-              _nav(2, Icons.account_balance_wallet_outlined, 'Ví của tôi'),
-              _nav(3, Icons.person_outline_rounded, 'Tài khoản'),
+              _nav(2, Icons.person_outline_rounded, 'Tài khoản'),
             ],
           ),
         ),
@@ -173,7 +422,7 @@ class _RiderHomeState extends State<RiderHome>
       selected: _tab == index,
       child: InkWell(
         borderRadius: BorderRadius.circular(16),
-        onTap: () => setState(() => _tab = index),
+        onTap: () => _selectTab(index),
         child: Padding(
           padding: const EdgeInsets.symmetric(vertical: 5),
           child: Column(
@@ -195,6 +444,112 @@ class _RiderHomeState extends State<RiderHome>
       ),
     ),
   );
+
+  Widget _activeTrip() {
+    final trip = _currentTrip!;
+    final mapCenter = LatLng(
+      (trip.pickupLatitude + trip.destinationLatitude) / 2,
+      (trip.pickupLongitude + trip.destinationLongitude) / 2,
+    );
+    return Stack(
+      children: [
+        Positioned.fill(
+          child: GoongMap(
+            key: _map,
+            routePoints: _routePoints,
+            initialTarget: mapCenter,
+            initialZoom: 12.5,
+            pickupPoint: LatLng(trip.pickupLatitude, trip.pickupLongitude),
+            destinationPoint: LatLng(
+              trip.destinationLatitude,
+              trip.destinationLongitude,
+            ),
+          ),
+        ),
+        const Positioned(
+          top: 0,
+          left: 0,
+          right: 0,
+          child: SafeArea(
+            bottom: false,
+            child: Padding(
+              padding: EdgeInsets.all(18),
+              child: Align(
+                alignment: Alignment.centerLeft,
+                child: Brand(size: 27),
+              ),
+            ),
+          ),
+        ),
+        Align(
+          alignment: Alignment.bottomCenter,
+          child: RiderTripPanel(
+            trip: trip,
+            route: _tripRoute,
+            busy: _tripBusy,
+            error: _tripError,
+            now: _now,
+            onApprove: _approveProposal,
+            onReject: _rejectProposal,
+            onCancel: _cancelTrip,
+            onDismiss: trip.status == TripStatus.paymentPending
+                ? _refreshTrip
+                : _dismissTrip,
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _bookingAction() {
+    if (_destination == null || widget.tripApi == null) {
+      return const SizedBox.shrink();
+    }
+    return Padding(
+      padding: const EdgeInsets.only(top: 10),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          SizedBox(
+            height: 46,
+            child: FilledButton.icon(
+              key: const Key('request-trip'),
+              onPressed: _tripBusy ? null : _createTrip,
+              icon: _tripBusy
+                  ? const SizedBox(
+                      width: 18,
+                      height: 18,
+                      child: CircularProgressIndicator(
+                        strokeWidth: 2,
+                        color: Colors.white,
+                      ),
+                    )
+                  : const Icon(Icons.local_taxi_rounded),
+              label: Text(_tripBusy ? 'Đang gửi yêu cầu...' : 'Đặt chuyến'),
+              style: FilledButton.styleFrom(
+                backgroundColor: green,
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(13),
+                ),
+              ),
+            ),
+          ),
+          if (_tripError != null)
+            Padding(
+              padding: const EdgeInsets.only(top: 8),
+              child: Text(
+                _tripError!,
+                key: const Key('trip-error'),
+                style: const TextStyle(
+                  color: Color(0xFFB3261E),
+                  fontSize: 12,
+                ),
+              ),
+            ),
+        ],
+      ),
+    );
+  }
 
   Widget _home() => LayoutBuilder(
     builder: (context, constraints) {
@@ -284,6 +639,7 @@ class _RiderHomeState extends State<RiderHome>
                           ),
                         ),
                         _DestinationPrompt(onTap: _selectLocations),
+                        _bookingAction(),
                         if (_panelAnimation.value > 0)
                           Expanded(
                             child: ClipRect(
@@ -331,6 +687,39 @@ class _RiderHomeState extends State<RiderHome>
               ),
             ],
           ),
+          if (_tripError != null &&
+              _currentTrip == null &&
+              _destination == null)
+            Positioned(
+              top: 76,
+              left: 16,
+              right: 16,
+              child: Material(
+                color: Colors.white,
+                elevation: 3,
+                borderRadius: BorderRadius.circular(14),
+                child: Padding(
+                  padding: const EdgeInsets.all(12),
+                  child: Row(
+                    children: [
+                      Expanded(
+                        child: Text(
+                          _tripError!,
+                          style: const TextStyle(
+                            color: Color(0xFFB3261E),
+                            fontSize: 12,
+                          ),
+                        ),
+                      ),
+                      TextButton(
+                        onPressed: () => unawaited(_restoreTrip()),
+                        child: const Text('Thử lại'),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ),
         ],
       );
     },
@@ -489,45 +878,4 @@ class _PromptAccentPainter extends CustomPainter {
 
   @override
   bool shouldRepaint(_PromptAccentPainter oldDelegate) => false;
-}
-
-class _EmptyPanel extends StatelessWidget {
-  const _EmptyPanel({
-    required this.icon,
-    required this.title,
-    required this.message,
-  });
-  final IconData icon;
-  final String title;
-  final String message;
-
-  @override
-  Widget build(BuildContext context) => Padding(
-    padding: const EdgeInsets.all(24),
-    child: Column(
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        CircleAvatar(
-          radius: 32,
-          backgroundColor: mint,
-          child: Icon(icon, color: green, size: 30),
-        ),
-        const SizedBox(height: 18),
-        Text(
-          title,
-          style: const TextStyle(
-            fontSize: 21,
-            fontWeight: FontWeight.w700,
-            color: ink,
-          ),
-        ),
-        const SizedBox(height: 8),
-        Text(
-          message,
-          textAlign: TextAlign.center,
-          style: const TextStyle(color: muted, fontSize: 12, height: 1.6),
-        ),
-      ],
-    ),
-  );
 }

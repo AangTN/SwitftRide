@@ -5,7 +5,7 @@ Hai ứng dụng Flutter dùng chung source và design system, có hai entrypoin
 - `lib/main_rider.dart`: khách hàng; Android ID `vn.swiftride.rider`.
 - `lib/main_driver.dart`: tài xế; Android ID `vn.swiftride.driver`.
 
-Đã có đăng nhập số điện thoại → OTP, đăng ký khách hàng (họ tên + SĐT → OTP), gửi lại OTP theo thời gian backend trả về, lưu/khôi phục phiên, refresh token một lần cho các yêu cầu đồng thời, hồ sơ từ API, đăng xuất. App tài xế chỉ chấp nhận user có role Driver; không có chức năng tự cấp quyền tài xế. Sau đăng nhập, khách hàng vào trang chủ với bản đồ Goong; hồ sơ và đăng xuất nằm ở tab Tài khoản. Đặt xe và nhận chuyến chưa thuộc bản này.
+Đã có đăng nhập số điện thoại → OTP, đăng ký khách hàng, lưu/khôi phục phiên, hồ sơ từ API và đăng xuất. App khách hỗ trợ tìm địa điểm, đặt chuyến với `Idempotency-Key`, khôi phục chuyến hiện tại, duyệt/từ chối giá tài xế, theo dõi trạng thái/tuyến/ETA, trạng thái thanh toán và lịch sử chuyến. Trạng thái chuyến được đồng bộ lại định kỳ qua Gateway để phục hồi sau khi mở lại app hoặc mất mạng. Menu khách gồm Trang chủ, Chuyến đi và Tài khoản; thanh toán demo do backend xử lý bằng ví SwiftRide. Ứng dụng tài xế vẫn có luồng đăng nhập và hồ sơ; luồng nhận chuyến/GPS/thu nhập đang chờ phần triển khai tài xế.
 
 Tài xế seed chỉ có Driver. Muốn dùng app khách, chọn Đăng ký tài khoản với cùng SĐT và nhập tên hiển thị; OTP hợp lệ sẽ thêm Rider vào cùng user. Nếu thử đăng nhập app khách bằng tài khoản Driver-only, app hướng sang form kích hoạt này. Tên khách có thể đổi ở màn tài khoản; tên và xe của tài xế được lấy từ Matching, hoàn toàn độc lập. Chi tiết chuyển dữ liệu: [driver-profile-migration.md](../../docs/driver-profile-migration.md).
 
@@ -24,6 +24,8 @@ Script build **lần lượt** hai app rồi mở server preview:
 - Khách hàng: http://localhost:5173
 - Tài xế: http://localhost:5174
 
+Chỉ chạy app khách hàng bằng `.\scripts\Start-Mobile.ps1 -App Rider`; khi đó chỉ cần mở http://localhost:5173.
+
 Mỗi origin có phiên riêng. Proxy Node chuyển `/api/*` sang Gateway; không cần bật CORS hoặc expose Docker ra LAN. CanvasKit, ảnh và font được đóng gói cục bộ, không cần tải font/CDN khi xem app.
 
 Trình duyệt PC hiển thị giao diện mobile, căn giữa và giới hạn rộng 430px. Điện thoại và bản xem thử dùng cùng màn hình đăng nhập, OTP, trang chủ khách hàng và hồ sơ.
@@ -39,7 +41,7 @@ GOONG_API_KEY=your_rest_api_key
 
 `Start-Mobile.ps1` chỉ lấy `GOONG_MAPTILES_KEY`, truyền cho Flutter qua file JSON tạm bằng `--dart-define-from-file`, rồi xóa file tạm khi kết thúc. Các mật khẩu, JWT và `GOONG_API_KEY` không được truyền vào app. Matching backend dùng REST API Key để tìm địa chỉ và lấy tuyến đường. Không truyền nguyên `.env` cho Flutter. Khi đổi Maptiles Key, cần build lại (không dùng `-SkipBuild`). Maptiles Key được đóng gói trong client, không phải bí mật có thể giấu khỏi người dùng ứng dụng.
 
-Bản đồ dùng MapLibre GL với style và dữ liệu Goong. Bản web cần Internet để tải thư viện MapLibre và bản đồ. Build Android với plugin hiện tại cần JDK 21. Trang chủ mặc định mở bản đồ khu vực Quận 1, TP.HCM, nhưng không đặt sẵn điểm đón hoặc chấm vị trí. Bấm nút định vị để xin quyền vị trí và lấy tọa độ thiết bị; chấm xanh có vòng sóng chỉ xuất hiện khi định vị thành công. Nút định vị trong form cũng lấy vị trí thật và hiển thị vòng tải trong lúc chờ. Tọa độ được giữ cùng nhãn “Vị trí hiện tại”; chưa tra ngược ra địa chỉ số nhà/tên đường. Android yêu cầu quyền vị trí; web cần localhost hoặc HTTPS. Khi chưa có lịch sử chuyến, trang chủ hiện ba “Điểm đến đề xuất” ở TP.HCM; ba “Điểm đến gần đây” là dữ liệu mock tùy chọn. Thẻ “Bạn muốn đi đâu?” và các địa điểm mở bảng chọn điểm đón/điểm đến; người dùng chọn dữ liệu cục bộ hoặc nhập địa chỉ rồi bấm Áp dụng. Chọn địa điểm có tọa độ sẽ di chuyển camera; địa chỉ tự nhập chưa được geocode. Điểm đón, loại xe và thanh toán chỉ giữ trong bộ nhớ màn hình; mỗi lần mở form mới thì điểm đến để trống, trừ khi mở từ một địa điểm đề xuất. Chưa gọi tìm địa chỉ/tuyến đường hoặc tạo chuyến. Bảng đề xuất ở trang chủ thay đổi chiều cao theo thao tác kéo và trượt về vị trí thu gọn/mở rộng khi thả. Tiêu đề/nút đóng của form được cố định, và bản đồ bị khóa thao tác khi form mở. Tab chuyến đi và ví là giao diện chờ, chưa nối dữ liệu nghiệp vụ.
+Bản đồ dùng MapLibre GL với style và dữ liệu Goong; bản web cần Internet để tải thư viện và bản đồ, Android yêu cầu quyền vị trí và JDK 21 khi build. Chọn điểm đón/đến từ kết quả tìm kiếm địa chỉ trước khi đặt chuyến. Địa chỉ, tọa độ và loại xe được gửi qua Trip API; app dùng `Idempotency-Key` ổn định để tránh tạo chuyến trùng khi gửi lại. Trong chuyến, bản đồ hiển thị điểm đón/đến và tuyến khi backend đã có; ETA tới đón và thời gian dự kiến lấy từ Matching. Trip được khôi phục bằng `GET /api/trips/current`, các hành động duyệt/từ chối/hủy gửi `stateVersion`, lịch sử dùng `GET /api/trips/history`. Trạng thái chuyến và tuyến được tải lại định kỳ qua Gateway, gồm cả trạng thái thanh toán sau khi trả khách. Dịch vụ tìm địa chỉ cần `GOONG_API_KEY`; bản đồ cần `GOONG_MAPTILES_KEY`.
 
 Nếu Goong trả `403`, kiểm tra đúng loại Maptiles Key, trạng thái kích hoạt tài khoản và giới hạn URL/IP. Tài khoản mới có thể cần tới 24 giờ để kích hoạt theo [hướng dẫn Goong](https://help.goong.io/kb/tai-lieu-bo-sung/luu-y/toi-can-lam-gi-de-bat-dau-su-dung-duoc-apis-cua-goong-maps/). Với preview khách hàng, URL được dùng là `http://localhost:5173` (hoặc `http://127.0.0.1:5173` nếu mở bằng IP); cần cho phép địa chỉ thực tế khi cấu hình giới hạn key.
 
@@ -93,7 +95,7 @@ flutter analyze
 flutter test
 ```
 
-Bao phủ chuẩn hóa SĐT, payload đăng ký, lỗi OTP, chặn Rider vào Driver, refresh đồng thời, mất response refresh, logout mất mạng, khôi phục phiên, bố cục 360px và desktop, kiểm tra họ tên đăng ký.
+Bao phủ chuẩn hóa SĐT, payload đăng ký, lỗi OTP, chặn Rider vào Driver, refresh đồng thời, mất response refresh, logout mất mạng, khôi phục phiên, tìm địa điểm, bố cục app và API đặt chuyến (Idempotency-Key, refresh/retry, 204, lịch sử, stateVersion, giải mã tuyến).
 
 ## Hình ảnh và font
 

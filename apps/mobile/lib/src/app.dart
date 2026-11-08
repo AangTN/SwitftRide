@@ -4,6 +4,7 @@ import 'package:flutter/services.dart';
 import 'auth.dart';
 import 'rider_home.dart';
 import 'places_api.dart';
+import 'trip_api.dart';
 
 const green = Color(0xFF00B650);
 const ink = Color(0xFF102237);
@@ -322,6 +323,7 @@ class _AuthScreenState extends State<AuthScreen> {
                     key: const ValueKey('rider-home'),
                     child: RiderHome(
                       places: PlacesApi(api),
+                      tripApi: TripApi(api),
                       fullName: user!.fullName,
                       account: _profileContent(),
                     ),

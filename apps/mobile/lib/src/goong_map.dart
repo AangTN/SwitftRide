@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:math' show Point;
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
 import 'package:maplibre_gl/maplibre_gl.dart';
@@ -12,9 +13,24 @@ const downtown = LatLng(10.7801, 106.6999);
 const goongMaptilesKey = String.fromEnvironment('GOONG_MAPTILES_KEY');
 
 class GoongMap extends StatefulWidget {
-  const GoongMap({super.key, this.interactive = true});
+  const GoongMap({
+    super.key,
+    this.interactive = true,
+    this.routePoints = const [],
+    this.initialTarget,
+    this.initialZoom = 14.5,
+    this.pickupPoint,
+    this.destinationPoint,
+    this.driverPoint,
+  });
 
   final bool interactive;
+  final List<LatLng> routePoints;
+  final LatLng? initialTarget;
+  final double initialZoom;
+  final LatLng? pickupPoint;
+  final LatLng? destinationPoint;
+  final LatLng? driverPoint;
 
   @override
   State<GoongMap> createState() => GoongMapState();
@@ -29,15 +45,19 @@ class GoongMapState extends State<GoongMap> {
   bool _ready = false;
   int _attempt = 0;
   LatLng _target = downtown;
+  bool _focusPending = false;
   bool _hasCurrentLocation = false;
   Circle? _marker;
   Circle? _pulse;
+  Line? _tripLine;
+  final List<Circle> _tripMarkers = [];
   Timer? _pulseTimer;
   bool _reduceMotion = false;
 
   @override
   void initState() {
     super.initState();
+    _target = widget.initialTarget ?? downtown;
     _load();
   }
 
@@ -52,6 +72,62 @@ class GoongMapState extends State<GoongMap> {
   void didUpdateWidget(GoongMap oldWidget) {
     super.didUpdateWidget(oldWidget);
     if (oldWidget.interactive != widget.interactive) _restartPulse();
+    if (!listEquals(oldWidget.routePoints, widget.routePoints) ||
+        oldWidget.pickupPoint != widget.pickupPoint ||
+        oldWidget.destinationPoint != widget.destinationPoint ||
+        oldWidget.driverPoint != widget.driverPoint) {
+      _syncTripAnnotations();
+    }
+    if (!_samePoint(oldWidget.initialTarget, widget.initialTarget) &&
+        widget.initialTarget != null) {
+      _target = widget.initialTarget!;
+      focus(_target, zoom: widget.initialZoom);
+    }
+  }
+
+  Future<void> _syncTripAnnotations() async {
+    final controller = _controller;
+    if (!_ready || controller == null) return;
+    try {
+      final oldLine = _tripLine;
+      _tripLine = null;
+      if (oldLine != null) await controller.removeLine(oldLine);
+      for (final marker in _tripMarkers) {
+        await controller.removeCircle(marker);
+      }
+      _tripMarkers.clear();
+      if (widget.routePoints.length > 1) {
+        _tripLine = await controller.addLine(
+          LineOptions(
+            geometry: widget.routePoints,
+            lineColor: '#00B650',
+            lineWidth: 5,
+            lineOpacity: .92,
+          ),
+        );
+      }
+      for (final point in [
+        if (widget.pickupPoint != null)
+          (widget.pickupPoint!, '#00B650'),
+        if (widget.destinationPoint != null)
+          (widget.destinationPoint!, '#00B650'),
+        if (widget.driverPoint != null) (widget.driverPoint!, '#1687FF'),
+      ]) {
+        _tripMarkers.add(
+          await controller.addCircle(
+            CircleOptions(
+              geometry: point.$1,
+              circleRadius: 8,
+              circleColor: point.$2,
+              circleStrokeColor: '#ffffff',
+              circleStrokeWidth: 3,
+            ),
+          ),
+        );
+      }
+    } catch (_) {
+      // MapLibre can finish a style update after the platform view is disposed.
+    }
   }
 
   void _restartPulse() {
@@ -137,11 +213,17 @@ class GoongMapState extends State<GoongMap> {
     }
   }
 
-  Future<void> focus(LatLng target) async {
+  Future<void> focus(LatLng target, {double? zoom}) async {
+    _target = target;
     final controller = _controller;
-    if (!_ready || controller == null) return;
+    if (!_ready || controller == null) {
+      _focusPending = true;
+      return;
+    }
     try {
-      await controller.animateCamera(CameraUpdate.newLatLngZoom(target, 14.5));
+      await controller.animateCamera(
+        CameraUpdate.newLatLngZoom(target, zoom ?? widget.initialZoom),
+      );
     } catch (_) {
       // The map may be disposed during an animation.
     }
@@ -151,7 +233,10 @@ class GoongMapState extends State<GoongMap> {
     _target = target;
     _hasCurrentLocation = true;
     final controller = _controller;
-    if (!_ready || controller == null) return;
+    if (!_ready || controller == null) {
+      _focusPending = true;
+      return;
+    }
     try {
       if (_marker == null) await _onLoaded(_attempt);
       for (final circle in [_marker, _pulse]) {
@@ -176,7 +261,21 @@ class GoongMapState extends State<GoongMap> {
       _error = null;
     });
     final controller = _controller;
-    if (controller == null || !_hasCurrentLocation) return;
+    if (controller == null) return;
+    if (_focusPending) {
+      _focusPending = false;
+      try {
+        await controller.animateCamera(
+          CameraUpdate.newLatLngZoom(_target, widget.initialZoom),
+        );
+      } catch (_) {
+        // A camera animation can outlive the platform view.
+      }
+    }
+    if (!_hasCurrentLocation) {
+      await _syncTripAnnotations();
+      return;
+    }
     try {
       final pulse = await controller.addCircle(
         CircleOptions(
@@ -199,6 +298,7 @@ class GoongMapState extends State<GoongMap> {
       );
       if (!mounted || attempt != _attempt) return;
       _restartPulse();
+      await _syncTripAnnotations();
     } catch (_) {
       // Map remains usable if an annotation cannot be added.
     }
@@ -228,7 +328,7 @@ class GoongMapState extends State<GoongMap> {
               styleString: _style!,
               initialCameraPosition: CameraPosition(
                 target: _target,
-                zoom: 14.5,
+                zoom: widget.initialZoom,
               ),
               onMapCreated: (controller) => _controller = controller,
               onStyleLoadedCallback: () => _onLoaded(attempt),
@@ -277,4 +377,11 @@ class GoongMapState extends State<GoongMap> {
       ),
     );
   }
+
+  bool _samePoint(LatLng? first, LatLng? second) =>
+      first == null
+          ? second == null
+          : second != null &&
+                first.latitude == second.latitude &&
+                first.longitude == second.longitude;
 }

@@ -10,7 +10,11 @@ const backend = new URL(process.env.SWIFTRIDE_API_URL || 'http://127.0.0.1:5000'
 if (!['http:', 'https:'].includes(backend.protocol)) throw new Error('API must use HTTP(S).');
 const mime = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.json': 'application/json', '.wasm': 'application/wasm', '.png': 'image/png', '.ttf': 'font/ttf', '.otf': 'font/otf', '.ico': 'image/x-icon' };
 const servers = [];
-for (const [app, port] of [['rider', 5173], ['driver', 5174]]) {
+const requestedApps = (process.env.SWIFTRIDE_APPS || 'rider,driver').split(',');
+const appPorts = { rider: 5173, driver: 5174 };
+for (const app of requestedApps) {
+  const port = appPorts[app];
+  if (!port) throw new Error(`Unknown app: ${app}`);
   const directory = path.join(root, `web-${app}`);
   if (!existsSync(path.join(directory, 'index.html'))) throw new Error(`Build ${app} first (scripts/Start-Mobile.ps1).`);
   const server = http.createServer((req, res) => {
