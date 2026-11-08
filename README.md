@@ -96,6 +96,13 @@ Các API app gọi qua Gateway với JWT. Điểm đón và điểm đến là �
 
 Trip gửi yêu cầu qua Outbox và RabbitMQ. Matching tìm tài xế phù hợp trong bán kính mặc định 10 km, với GPS mới trong 120 giây. Khách có **90 giây** để duyệt, hết giờ thì hủy chuyến. Khách chủ động từ chối hoặc tài xế từ chối/hết **30 giây** thì tìm tiếp nếu còn lượt. Tối đa **3 đề xuất**, tính cả lượt đầu. Hết lượt thì chuyến là `Failed`.
 
+Mỗi khách được có một chuyến đang phục vụ, từ lúc tạo đến trước khi trả khách.
+Tạo thêm bằng khóa khác trong giai đoạn này trả HTTP 409 `active_trip_exists`
+kèm `tripId` của chuyến đang có. Gửi lại cùng `Idempotency-Key` trả chuyến
+của yêu cầu đó. Sau trả khách, hủy hoặc tìm thất bại, khách được đặt tiếp.
+`GET /api/trips/current` chỉ trả chuyến đang phục vụ; các chuyến đã trả khách
+và thanh toán còn chờ được xem qua lịch sử hoặc ID chuyến.
+
 Matching tính quãng đường, thời gian và giá cho chặng đón → đến, rồi Trip lưu báo giá trong `trip_proposals`. Matching chuẩn bị thời gian tới đón theo đề xuất và dùng lại tuyến từ Redis khi tài xế nhận nếu cache còn. Khi đón khách, Trip báo đổi chặng. Nếu GPS cho thấy xe đi lệch, Matching tính lại tuyến đang chạy. Redis tự hết hạn sau một giờ, gia hạn tuyến đang chạy khi xử lý GPS và dọn cache khi chuyến kết thúc. Giá thanh toán lấy từ giá đã chốt trong TripDB.
 
 Khi trả khách, Trip giải phóng tài xế và yêu cầu Payment xử lý ví demo. Chuyến ở `PaymentPending` trong lúc xử lý hoặc khi thanh toán lỗi. App kiểm tra `paymentStatus` và chỉ báo thành công khi chuyến là `Paid`.
@@ -250,6 +257,10 @@ Auth giữ tên hiển thị khách. Matching sở hữu tên tài xế, xe, v�
 Database cũ cần chạy [hướng dẫn chuyển hồ sơ tài xế](docs/driver-profile-migration.md) khi nâng cấp. Migration giữ bản lưu `legacy_driver_profiles` trong AuthDB; công cụ sao chép và đối chiếu dữ liệu sang MongoDB. Không xóa volume để nâng cấp.
 
 Migration `RiderAndFareSnapshots` thêm tên và SĐT khách tại lúc đặt xe, cùng quãng đường, thời gian và thông số tính giá trên đề xuất. Trip chỉ trả SĐT cho tài xế được gán khi đang phục vụ chuyến. Ảnh tài xế và ảnh xe là khóa ảnh có thể trống. Redis lưu polyline; TripDB lưu số liệu báo giá. Payment ghi sổ các giao dịch ví demo.
+
+Migration `OneServingTripPerRider` thêm unique index có điều kiện trên khách.
+Nếu dữ liệu cũ có nhiều chuyến đang phục vụ cho cùng khách, migration dừng và
+báo lỗi để xử lý các chuyến đó qua luồng nghiệp vụ trước khi chạy lại.
 
 Tạo/apply migration thủ công (PowerShell 7):
 
