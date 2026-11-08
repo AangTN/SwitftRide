@@ -68,6 +68,7 @@ public sealed class PricingOptions
 
 public interface IMatchingStore
 {
+    Task<DriverAvailability?> GetDriverAsync(string driverId, CancellationToken ct);
     Task<DriverAvailability?> UpdateGpsAsync(string driverId, DriverGpsRequest gps, DateTime now, CancellationToken ct);
     Task<bool> UpdateAvailabilityAsync(
         string driverId, string vehicleType, DriverLocationUpdate update, DateTime now, CancellationToken ct);

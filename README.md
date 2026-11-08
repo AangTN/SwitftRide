@@ -11,7 +11,7 @@ Backend .NET 10 gồm Auth, Trip, Matching & Pricing, Payment và API Gateway YA
 - Matching & Pricing: hồ sơ xe/tài xế, GPS và trạng thái nhận chuyến, tìm và giữ tài xế, báo giá và định tuyến Goong V2. MongoDB lưu vị trí và công việc tích hợp; Redis giữ tuyến và thời gian tới đón tạm thời.
 - Payment: ví SwiftRide demo, ghi sổ, chống trừ tiền lặp, hoàn tiền nội bộ và API thu nhập tài xế. Chưa tích hợp thẻ, ngân hàng hoặc cổng SMS thật.
 - Backend giao tiếp qua RabbitMQ/MassTransit; Trip và Payment dùng Outbox. Có health checks, Problem Details, Swagger ở Development và Docker Compose.
-- Hai app Flutter có luồng OTP và hồ sơ. App khách đã có màn chọn địa chỉ và loại xe. Các màn đặt chuyến, theo dõi, thanh toán và thu nhập đang chờ nối frontend với API. Xem [hướng dẫn app](apps/mobile/DEVELOPMENT.md).
+- Hai app Flutter dùng chung luồng OTP và hồ sơ. App khách đã nối tìm địa chỉ, đặt chuyến, duyệt đề xuất, theo dõi tuyến/trạng thái, thanh toán demo và lịch sử với backend; app tài xế đã nối nhận lời mời SignalR, GPS, các bước đón/trả khách, lịch sử và thu nhập. Xem [hướng dẫn app](apps/mobile/DEVELOPMENT.md).
 
 ## Chạy hai app trên PC
 
@@ -95,6 +95,13 @@ Các API app gọi qua Gateway với JWT. Điểm đón và điểm đến là �
 | `GET /api/payments/trips/{tripId}`, `GET /api/payments/me/wallet`, `GET /api/payments/drivers/me/earnings` | Tra kết quả thanh toán, số dư ví demo và thu nhập theo quyền. |
 
 Trip gửi yêu cầu qua Outbox và RabbitMQ. Matching tìm tài xế phù hợp trong bán kính mặc định 10 km, với GPS mới trong 120 giây. Khách có **90 giây** để duyệt, hết giờ thì hủy chuyến. Khách chủ động từ chối hoặc tài xế từ chối/hết **30 giây** thì tìm tiếp nếu còn lượt. Tối đa **3 đề xuất**, tính cả lượt đầu. Hết lượt thì chuyến là `Failed`.
+
+Mỗi khách được có một chuyến đang phục vụ, từ lúc tạo đến trước khi trả khách.
+Tạo thêm bằng khóa khác trong giai đoạn này trả HTTP 409 `active_trip_exists`
+kèm `tripId` của chuyến đang có. Gửi lại cùng `Idempotency-Key` trả chuyến
+của yêu cầu đó. Sau trả khách, hủy hoặc tìm thất bại, khách được đặt tiếp.
+`GET /api/trips/current` chỉ trả chuyến đang phục vụ; các chuyến đã trả khách
+và thanh toán còn chờ được xem qua lịch sử hoặc ID chuyến.
 
 Matching tính quãng đường, thời gian và giá cho chặng đón → đến, rồi Trip lưu báo giá trong `trip_proposals`. Matching chuẩn bị thời gian tới đón theo đề xuất và dùng lại tuyến từ Redis khi tài xế nhận nếu cache còn. Khi đón khách, Trip báo đổi chặng. Nếu GPS cho thấy xe đi lệch, Matching tính lại tuyến đang chạy. Redis tự hết hạn sau một giờ, gia hạn tuyến đang chạy khi xử lý GPS và dọn cache khi chuyến kết thúc. Giá thanh toán lấy từ giá đã chốt trong TripDB.
 
@@ -250,6 +257,10 @@ Auth giữ tên hiển thị khách. Matching sở hữu tên tài xế, xe, v�
 Database cũ cần chạy [hướng dẫn chuyển hồ sơ tài xế](docs/driver-profile-migration.md) khi nâng cấp. Migration giữ bản lưu `legacy_driver_profiles` trong AuthDB; công cụ sao chép và đối chiếu dữ liệu sang MongoDB. Không xóa volume để nâng cấp.
 
 Migration `RiderAndFareSnapshots` thêm tên và SĐT khách tại lúc đặt xe, cùng quãng đường, thời gian và thông số tính giá trên đề xuất. Trip chỉ trả SĐT cho tài xế được gán khi đang phục vụ chuyến. Ảnh tài xế và ảnh xe là khóa ảnh có thể trống. Redis lưu polyline; TripDB lưu số liệu báo giá. Payment ghi sổ các giao dịch ví demo.
+
+Migration `OneServingTripPerRider` thêm unique index có điều kiện trên khách.
+Nếu dữ liệu cũ có nhiều chuyến đang phục vụ cho cùng khách, migration dừng và
+báo lỗi để xử lý các chuyến đó qua luồng nghiệp vụ trước khi chạy lại.
 
 Tạo/apply migration thủ công (PowerShell 7):
 

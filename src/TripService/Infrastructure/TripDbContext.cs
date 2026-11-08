@@ -43,6 +43,8 @@ public sealed class TripDbContext(DbContextOptions<TripDbContext> options) : DbC
             e.Property(x => x.FailureReason).HasMaxLength(100);
             e.HasIndex(x => new { x.RiderId, x.CreatedAt }); e.HasIndex(x => new { x.DriverId, x.Status });
             e.HasIndex(x => new { x.RiderId, x.IdempotencyKey }).IsUnique().HasFilter("[idempotency_key] <> ''");
+            e.HasIndex(x => x.RiderId).IsUnique().HasDatabaseName("ux_trips_rider_in_service")
+                .HasFilter("[status] IN ('Requested', 'Matching', 'AwaitingRiderApproval', 'AwaitingDriverResponse', 'DriverAccepted', 'EnRoute', 'PickedUp')");
             e.HasMany(x => x.History).WithOne().HasForeignKey(x => x.TripId).OnDelete(DeleteBehavior.Restrict);
             e.HasMany(x => x.Proposals).WithOne().HasForeignKey(x => x.TripId).OnDelete(DeleteBehavior.Restrict);
         });

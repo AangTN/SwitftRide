@@ -13,6 +13,13 @@ namespace SwiftRide.Matching.Api;
 [TypeFilter(typeof(MatchingExceptionFilter))]
 public sealed class MatchingController(MatchingCoordinator coordinator, IMatchingStore store) : ControllerBase
 {
+    [HttpGet("drivers/me/availability"), Authorize(Roles = "Driver")]
+    public async Task<IActionResult> GetAvailability(CancellationToken ct)
+    {
+        var driver = await store.GetDriverAsync(UserId(), ct);
+        return driver is null ? NotFound() : Ok(new { driver.Status, driver.CurrentTripId, driver.CurrentProposalId });
+    }
+
     [HttpPut("drivers/me/availability"), Authorize(Roles = "Driver")]
     public async Task<IActionResult> UpdateAvailability(DriverLocationUpdate request, CancellationToken ct)
     {

@@ -292,7 +292,7 @@ Future<void> openPicker(WidgetTester tester, PlaceLookup lookup) async {
           pickup: defaultPickup,
           recentDestinations: const [],
           vehicleType: RideVehicleType.motorcycle,
-          paymentMethod: RidePaymentMethod.cash,
+          paymentMethod: RidePaymentMethod.swiftRideWallet,
           places: lookup,
         ),
       ),
