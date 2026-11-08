@@ -47,8 +47,11 @@ try {
     }
     if ($BuildOnly) { return }
     if ($Target -eq 'Web') {
-        if (!(Test-Path 'build/web-rider/index.html') -or !(Test-Path 'build/web-driver/index.html')) { throw 'First run with -App Both to build both previews.' }
+        foreach ($role in $apps) {
+            if (!(Test-Path "build/web-$role/index.html")) { throw "Build $role first or omit -SkipBuild." }
+        }
         $env:SWIFTRIDE_API_URL = $ApiBaseUrl
+        $env:SWIFTRIDE_APPS = $apps -join ','
         node (Join-Path $PSScriptRoot 'serve-mobile.mjs')
     }
 } finally {

@@ -79,7 +79,6 @@ enum RideVehicleType {
 }
 
 enum RidePaymentMethod {
-  cash('Tiền mặt', Icons.payments_rounded),
   swiftRideWallet('Ví SwiftRide', Icons.account_balance_wallet_rounded);
 
   const RidePaymentMethod(this.label, this.icon);
@@ -453,10 +452,11 @@ class _RideLocationPickerState extends State<RideLocationPicker> {
                       const SizedBox(height: 12),
                       Row(
                         children: [
-                          for (final option in RidePaymentMethod.values) ...[
-                            if (option.index > 0) const SizedBox(width: 10),
-                            Expanded(child: _paymentCard(option)),
-                          ],
+                          Expanded(
+                            child: _paymentCard(
+                              RidePaymentMethod.swiftRideWallet,
+                            ),
+                          ),
                         ],
                       ),
                       const SizedBox(height: 24),
@@ -640,7 +640,6 @@ class _RideLocationPickerState extends State<RideLocationPicker> {
 
   Widget _paymentCard(RidePaymentMethod option) {
     final selected = _paymentMethod == option;
-    final cash = option == RidePaymentMethod.cash;
     return _optionCard(
       label: option.label,
       selected: selected,
@@ -653,13 +652,13 @@ class _RideLocationPickerState extends State<RideLocationPicker> {
               width: 26,
               height: 26,
               decoration: BoxDecoration(
-                color: cash ? const Color(0xFFDDF5CA) : _bookingAccent,
+                color: _bookingAccent,
                 borderRadius: BorderRadius.circular(7),
               ),
               child: Icon(
                 option.icon,
                 size: 21,
-                color: cash ? const Color(0xFF158C43) : Colors.white,
+                color: Colors.white,
               ),
             ),
             const SizedBox(width: 9),
