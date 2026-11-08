@@ -180,6 +180,11 @@ namespace SwiftRide.Trip.Infrastructure.Migrations
 
                     b.HasKey("Id");
 
+                    b.HasIndex("RiderId")
+                        .IsUnique()
+                        .HasDatabaseName("ux_trips_rider_in_service")
+                        .HasFilter("[status] IN ('Requested', 'Matching', 'AwaitingRiderApproval', 'AwaitingDriverResponse', 'DriverAccepted', 'EnRoute', 'PickedUp')");
+
                     b.HasIndex("DriverId", "Status");
 
                     b.HasIndex("RiderId", "CreatedAt");

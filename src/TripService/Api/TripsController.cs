@@ -14,6 +14,12 @@ namespace SwiftRide.Trip.Api;
 [ResponseCache(NoStore = true, Location = ResponseCacheLocation.None)]
 public sealed class TripsController(TripDbContext db, ITripRealtimePublisher realtime, ITripMatchingNotifier matching, ITripPaymentNotifier payment, TimeProvider clock, IOptions<TripWorkflowOptions> workflow) : ControllerBase
 {
+    private static readonly TripStatus[] InServiceStatuses =
+    [
+        TripStatus.Requested, TripStatus.Matching, TripStatus.AwaitingRiderApproval,
+        TripStatus.AwaitingDriverResponse, TripStatus.DriverAccepted, TripStatus.EnRoute, TripStatus.PickedUp
+    ];
+
     [HttpPost]
     public async Task<IActionResult> Create(CreateTripRequest request, [FromHeader(Name = "Idempotency-Key")] string? idempotencyKey, CancellationToken ct)
     {
@@ -24,6 +30,8 @@ public sealed class TripsController(TripDbContext db, ITripRealtimePublisher rea
         if (string.IsNullOrWhiteSpace(idempotencyKey)) throw Failure(400, "idempotency_key_required", "Idempotency-Key is required.");
         var existing = await db.Trips.Include(x => x.Proposals).SingleOrDefaultAsync(x => x.RiderId == riderId && x.IdempotencyKey == idempotencyKey, ct);
         if (existing is not null) return Ok(Snapshot(existing));
+        var active = await ActiveTripForRider(riderId, ct);
+        if (active is not null) return ActiveTripConflict(active.Id);
         var profile = await HttpContext.RequestServices.GetRequiredService<RiderProfileClient>()
             .GetAsync(riderId, Request.Headers.Authorization.ToString(), ct);
         var now = clock.GetUtcNow();
@@ -44,6 +52,8 @@ public sealed class TripsController(TripDbContext db, ITripRealtimePublisher rea
             db.ChangeTracker.Clear();
             var duplicate = await db.Trips.Include(x => x.Proposals).SingleOrDefaultAsync(x => x.RiderId == riderId && x.IdempotencyKey == idempotencyKey, ct);
             if (duplicate is not null) return Ok(Snapshot(duplicate));
+            active = await ActiveTripForRider(riderId, ct);
+            if (active is not null) return ActiveTripConflict(active.Id);
             throw;
         }
         await realtime.PublishTripChangedAsync(trip, ct);
@@ -55,9 +65,20 @@ public sealed class TripsController(TripDbContext db, ITripRealtimePublisher rea
     {
         var userId = UserId();
         var trip = await db.Trips.Include(x => x.Proposals).Where(x => (x.RiderId == userId || x.DriverId == userId || x.Proposals.Any(p => p.DriverId == userId && p.Status == ProposalStatus.AwaitingDriverResponse)) &&
-            x.Status != TripStatus.Paid && x.Status != TripStatus.Cancelled && x.Status != TripStatus.Failed).OrderByDescending(x => x.UpdatedAt).FirstOrDefaultAsync(ct);
+            InServiceStatuses.Contains(x.Status)).OrderByDescending(x => x.UpdatedAt).FirstOrDefaultAsync(ct);
         return trip is null ? NoContent() : Ok(Snapshot(trip));
     }
+
+    private Task<TripEntity?> ActiveTripForRider(Guid riderId, CancellationToken ct) =>
+        db.Trips.AsNoTracking().FirstOrDefaultAsync(x => x.RiderId == riderId && InServiceStatuses.Contains(x.Status), ct);
+
+    private static ConflictObjectResult ActiveTripConflict(Guid tripId) => new(new ProblemDetails
+    {
+        Status = StatusCodes.Status409Conflict,
+        Title = "active_trip_exists",
+        Detail = "Finish or cancel the current trip before booking another.",
+        Extensions = { ["tripId"] = tripId }
+    });
 
     [HttpGet("{tripId:guid}")]
     public async Task<IActionResult> Get(Guid tripId, CancellationToken ct)

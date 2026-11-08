@@ -15,6 +15,7 @@
 ## Service Boundaries
 
 - Trip owns the trip state machine, proposals, confirmed fares, and SignalR. Preserve the 90-second rider deadline, the 30-second driver deadline, and the limit of three proposals unless the task changes those rules. Rider timeout cancels the trip. Rider rejection, driver rejection, and driver timeout can advance to the next proposal.
+- A rider can have one trip in service, from Requested through PickedUp. Enforce this at database level. DroppedOff, PaymentPending, Paid, Cancelled, and Failed allow another booking. Preserve replay by idempotency key.
 - Matching owns driver availability and GPS in MongoDB and the route cache in Redis. Keep polyline and pickup ETA in Matching. Trip accesses routes through the authorized API and message contracts. Keep confirmed fares and proposal pricing snapshots in TripDB.
 - Keep Trip and Payment outbox records in the same database transaction as the business change. Preserve idempotency and verify trip, proposal, and driver IDs before processing delayed messages.
 - Flutter apps call the Gateway. Use `/api/trips/realtime` for SignalR, and reload the snapshot and route after reconnecting. The demo payment flow uses the internal wallet. Keep payment credentials out of app and service payloads.

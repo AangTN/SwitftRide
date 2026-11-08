@@ -179,7 +179,7 @@ public sealed class TripOutboxTests
 
         public async Task<TripEntity> EnqueueMatching()
         {
-            var trip = new TripEntity { Status = TripStatus.Matching };
+            var trip = new TripEntity { RiderId = Guid.NewGuid(), Status = TripStatus.Matching };
             trip.Proposals.Add(new TripProposal { TripId = trip.Id, Status = ProposalStatus.Searching });
             Db.Trips.Add(trip);
             await new TripMatchingNotifier(Db, Clock).RequestOpenProposalsAsync(trip, default);
