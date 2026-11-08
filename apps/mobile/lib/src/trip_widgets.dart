@@ -99,9 +99,15 @@ class TripAction extends StatelessWidget {
 }
 
 class TripJourneyCard extends StatelessWidget {
-  const TripJourneyCard({super.key, required this.trip, this.compact = false});
+  const TripJourneyCard({
+    super.key,
+    required this.trip,
+    this.compact = false,
+    this.fullAddress = false,
+  });
   final TripSnapshot trip;
   final bool compact;
+  final bool fullAddress;
   @override
   Widget build(BuildContext c) => TripCard(
     padding: 14,
@@ -143,8 +149,10 @@ class TripJourneyCard extends StatelessWidget {
             const SizedBox(height: 3),
             Text(
               value,
-              maxLines: compact ? 1 : 2,
-              overflow: TextOverflow.ellipsis,
+              maxLines: fullAddress ? null : (compact ? 1 : 2),
+              overflow: fullAddress
+                  ? TextOverflow.visible
+                  : TextOverflow.ellipsis,
               style: const TextStyle(
                 color: ink,
                 fontSize: 13,
@@ -155,6 +163,58 @@ class TripJourneyCard extends StatelessWidget {
         ),
       ),
     ],
+  );
+}
+
+class TripStopCard extends StatelessWidget {
+  const TripStopCard({
+    super.key,
+    required this.label,
+    required this.address,
+    this.icon = Icons.location_on_rounded,
+  });
+  final String label;
+  final String address;
+  final IconData icon;
+  @override
+  Widget build(BuildContext c) => TripCard(
+    padding: 12,
+    child: Row(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Padding(
+          padding: const EdgeInsets.only(top: 2),
+          child: Icon(icon, color: green, size: 21),
+        ),
+        const SizedBox(width: 9),
+        Expanded(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                label,
+                style: const TextStyle(
+                  color: muted,
+                  fontSize: 11,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+              const SizedBox(height: 3),
+              Text(
+                address,
+                maxLines: 2,
+                overflow: TextOverflow.ellipsis,
+                style: const TextStyle(
+                  color: ink,
+                  fontSize: 13,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+            ],
+          ),
+        ),
+      ],
+    ),
   );
 }
 
@@ -325,6 +385,47 @@ class TripMetrics extends StatelessWidget {
   }
 }
 
+class TripFareSummary extends StatelessWidget {
+  const TripFareSummary({super.key, required this.trip});
+  final TripSnapshot trip;
+  @override
+  Widget build(BuildContext c) {
+    final amount = trip.agreedAmount ?? trip.currentProposal?.amount;
+    return TripCard(
+      color: tripMint,
+      padding: 12,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Text(
+            'Giá chuyến',
+            style: TextStyle(
+              color: muted,
+              fontSize: 11,
+              fontWeight: FontWeight.w600,
+            ),
+          ),
+          const SizedBox(height: 4),
+          Row(
+            children: [
+              Text(
+                moneyVnd(amount),
+                style: const TextStyle(
+                  color: green,
+                  fontSize: 19,
+                  fontWeight: FontWeight.w800,
+                ),
+              ),
+              const Spacer(),
+              TripPaymentMethodLabel(trip: trip),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+}
+
 class TripEta extends StatelessWidget {
   const TripEta({super.key, required this.text});
   final String text;
@@ -449,7 +550,7 @@ class TripPaymentBadge extends StatelessWidget {
   }
 }
 
-class TripSheet extends StatelessWidget {
+class TripSheet extends StatefulWidget {
   const TripSheet({
     super.key,
     required this.title,
@@ -460,54 +561,206 @@ class TripSheet extends StatelessWidget {
   final List<Widget> children;
   final Widget? trailing;
   @override
-  Widget build(BuildContext c) => Material(
-    color: Colors.white,
-    elevation: 8,
-    shadowColor: const Color(0x220D3721),
-    borderRadius: const BorderRadius.vertical(top: Radius.circular(26)),
-    child: Container(
-      width: double.infinity,
-      constraints: BoxConstraints(maxHeight: MediaQuery.sizeOf(c).height * .76),
-      padding: const EdgeInsets.fromLTRB(18, 10, 18, 18),
-      child: SingleChildScrollView(
+  State<TripSheet> createState() => _TripSheetState();
+}
+
+class _TripSheetState extends State<TripSheet>
+    with SingleTickerProviderStateMixin {
+  final _sheetKey = GlobalKey();
+  final _headerKey = GlobalKey();
+  late final AnimationController _animation = AnimationController(
+    vsync: this,
+    duration: const Duration(milliseconds: 220),
+  )..addListener(_tick);
+
+  bool collapsed = false;
+  bool dragging = false;
+  double? expandedHeight;
+  double? headerHeight;
+  double? height;
+  double dragHeight = 0;
+  double animationFrom = 0;
+  double animationTo = 0;
+
+  double get minHeight => (headerHeight ?? 46) + 24;
+
+  void _tick() {
+    if (!mounted) return;
+    setState(() {
+      height =
+          animationFrom +
+          (animationTo - animationFrom) *
+              Curves.easeOutCubic.transform(_animation.value);
+    });
+  }
+
+  @override
+  void dispose() {
+    _animation.dispose();
+    super.dispose();
+  }
+
+  @override
+  void didUpdateWidget(TripSheet old) {
+    super.didUpdateWidget(old);
+    if (old.title != widget.title) {
+      _animation.stop();
+      collapsed = false;
+      height = null;
+    }
+  }
+
+  void _measure() {
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      final header =
+          _headerKey.currentContext?.findRenderObject() as RenderBox?;
+      if (header != null) {
+        final value = header.size.height;
+        if (headerHeight == null || (headerHeight! - value).abs() > .5) {
+          setState(() => headerHeight = value);
+        }
+      }
+      final sheet = _sheetKey.currentContext?.findRenderObject() as RenderBox?;
+      if (sheet != null && !collapsed && height == null && !dragging) {
+        final value = sheet.size.height;
+        if (expandedHeight == null || (expandedHeight! - value).abs() > .5) {
+          setState(() => expandedHeight = value);
+        }
+      }
+    });
+  }
+
+  void _dragStart(DragStartDetails _) {
+    _animation.stop();
+    dragging = true;
+    if (!collapsed && expandedHeight == null) {
+      final box = _sheetKey.currentContext?.findRenderObject() as RenderBox?;
+      if (box != null) expandedHeight = box.size.height;
+    }
+    dragHeight = collapsed
+        ? minHeight
+        : (height ?? expandedHeight ?? minHeight);
+    if (collapsed) {
+      setState(() {
+        collapsed = false;
+        height = minHeight;
+      });
+    }
+  }
+
+  void _dragUpdate(DragUpdateDetails details) {
+    final max = expandedHeight;
+    if (max == null) return;
+    dragHeight = (dragHeight - details.delta.dy).clamp(minHeight, max);
+    setState(() => height = dragHeight);
+  }
+
+  void _dragEnd(DragEndDetails details) {
+    dragging = false;
+    final max = expandedHeight;
+    if (max == null) return;
+    final velocity = details.primaryVelocity ?? 0;
+    final target = velocity > 350
+        ? minHeight
+        : velocity < -350
+        ? max
+        : dragHeight < (minHeight + max) / 2
+        ? minHeight
+        : max;
+    _animateTo(target);
+  }
+
+  void _animateTo(double target) {
+    animationFrom =
+        height ?? (collapsed ? minHeight : expandedHeight ?? target);
+    animationTo = target;
+    _animation.forward(from: 0).whenComplete(() {
+      if (!mounted) return;
+      setState(() {
+        collapsed = target <= minHeight + .5;
+        height = null;
+      });
+      _measure();
+    });
+  }
+
+  @override
+  Widget build(BuildContext c) {
+    _measure();
+    final maxHeight = MediaQuery.sizeOf(c).height * .76;
+    final header = GestureDetector(
+      behavior: HitTestBehavior.opaque,
+      onVerticalDragStart: _dragStart,
+      onVerticalDragUpdate: _dragUpdate,
+      onVerticalDragEnd: _dragEnd,
+      child: Column(
+        key: _headerKey,
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Center(
+            child: Container(
+              width: 38,
+              height: 4,
+              margin: const EdgeInsets.only(top: 4, bottom: 12),
+              decoration: BoxDecoration(
+                color: const Color(0xFFCAD2CE),
+                borderRadius: BorderRadius.circular(4),
+              ),
+            ),
+          ),
+          Row(
+            children: [
+              Expanded(
+                child: Text(
+                  widget.title,
+                  key: const Key('trip-status'),
+                  style: const TextStyle(
+                    color: ink,
+                    fontSize: 21,
+                    fontWeight: FontWeight.w800,
+                  ),
+                ),
+              ),
+              ?widget.trailing,
+            ],
+          ),
+          const SizedBox(height: 4),
+        ],
+      ),
+    );
+    return Material(
+      color: Colors.white,
+      elevation: 8,
+      shadowColor: const Color(0x220D3721),
+      borderRadius: const BorderRadius.vertical(top: Radius.circular(26)),
+      child: Container(
+        key: _sheetKey,
+        width: double.infinity,
+        height: height?.clamp(0.0, maxHeight),
+        constraints: BoxConstraints(maxHeight: maxHeight),
+        padding: const EdgeInsets.fromLTRB(18, 6, 18, 18),
         child: Column(
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            Center(
-              child: Container(
-                width: 38,
-                height: 4,
-                decoration: BoxDecoration(
-                  color: const Color(0xFFCAD2CE),
-                  borderRadius: BorderRadius.circular(4),
-                ),
-              ),
-            ),
-            const SizedBox(height: 17),
-            Row(
-              children: [
-                Expanded(
-                  child: Text(
-                    title,
-                    key: const Key('trip-status'),
-                    style: const TextStyle(
-                      color: ink,
-                      fontSize: 21,
-                      fontWeight: FontWeight.w800,
-                    ),
+            header,
+            if (!collapsed)
+              Flexible(
+                child: SingleChildScrollView(
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [const SizedBox(height: 12), ...widget.children],
                   ),
                 ),
-                ?trailing,
-              ],
-            ),
-            const SizedBox(height: 16),
-            ...children,
+              ),
           ],
         ),
       ),
-    ),
-  );
+    );
+  }
 }
 
 class TripCompletionPage extends StatefulWidget {

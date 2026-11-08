@@ -46,7 +46,7 @@ class RiderTripPanel extends StatelessWidget {
       TripStatus.enRoute,
     }.contains(s);
     return TripSheet(
-      title: s.label,
+      title: review ? 'Xác nhận tài xế và chuyến đi' : s.label,
       trailing: (review || waiting) && remaining != null
           ? TripCountdown(
               key: const Key('trip-countdown'),
@@ -68,7 +68,7 @@ class RiderTripPanel extends StatelessWidget {
           ),
           const SizedBox(height: 16),
         ],
-        if (p != null && p.status != ProposalStatus.searching) ...[
+        if (p != null && p.status != ProposalStatus.searching && !moving) ...[
           TripPersonCard(
             name: p.driverName ?? 'Tài xế SwiftRide',
             subtitle: p.vehicleName,
@@ -100,7 +100,9 @@ class RiderTripPanel extends StatelessWidget {
         ],
         if (searching)
           TripJourneyCard(trip: trip, compact: true)
-        else if (review || waiting)
+        else if (review)
+          TripJourneyCard(trip: trip, fullAddress: true)
+        else if (waiting)
           ExpansionTile(
             dense: true,
             visualDensity: VisualDensity.compact,
@@ -114,32 +116,54 @@ class RiderTripPanel extends StatelessWidget {
             ),
             children: [TripJourneyCard(trip: trip)],
           )
-        else if (approaching || moving)
-          ExpansionTile(
-            tilePadding: EdgeInsets.zero,
-            childrenPadding: const EdgeInsets.only(bottom: 12),
-            title: Text(
-              moving ? trip.destinationAddress : trip.pickupAddress,
-              maxLines: 2,
-              overflow: TextOverflow.ellipsis,
-              style: const TextStyle(
-                color: ink,
-                fontWeight: FontWeight.w600,
-                fontSize: 13,
-              ),
-            ),
-            subtitle: Text(
-              moving ? 'Điểm đến' : 'Điểm đón',
-              style: const TextStyle(color: muted, fontSize: 11),
-            ),
-            leading: const Icon(Icons.location_on_rounded, color: green),
-            children: [TripJourneyCard(trip: trip)],
-          ),
+        else if (approaching)
+          TripStopCard(
+            label: 'Điểm đón',
+            address: trip.pickupAddress,
+            icon: Icons.trip_origin_rounded,
+          )
+        else if (moving)
+          TripStopCard(label: 'Điểm đến', address: trip.destinationAddress),
         if (p?.amount != null) ...[
           const SizedBox(height: 12),
-          TripMetrics(trip: trip),
-          const SizedBox(height: 8),
-          TripPaymentMethodLabel(trip: trip),
+          if (approaching || moving) TripFareSummary(trip: trip),
+          if (!approaching && !moving) ...[
+            if (review) _ReviewMetrics(trip: trip) else TripMetrics(trip: trip),
+            const SizedBox(height: 8),
+            if (review)
+              TripCard(
+                padding: 12,
+                child: Row(
+                  children: [
+                    Icon(
+                      trip.isCash
+                          ? Icons.payments_rounded
+                          : Icons.account_balance_wallet_rounded,
+                      color: green,
+                    ),
+                    const SizedBox(width: 12),
+                    Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        const Text(
+                          'Thanh toán',
+                          style: TextStyle(color: muted, fontSize: 11),
+                        ),
+                        Text(
+                          trip.paymentMethodLabel,
+                          style: const TextStyle(
+                            color: ink,
+                            fontWeight: FontWeight.w700,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ],
+                ),
+              )
+            else
+              TripPaymentMethodLabel(trip: trip),
+          ],
         ],
         if (error != null) ...[
           const SizedBox(height: 10),
@@ -153,7 +177,7 @@ class RiderTripPanel extends StatelessWidget {
           const SizedBox(height: 12),
           Text(
             s == TripStatus.failed
-                ? 'Chưa tìm được tài xế phù hợp. Bạn có thể thử đặt lại.'
+                ? _failureMessage(trip)
                 : 'Chuyến đi đã được hủy.',
             style: const TextStyle(color: muted, fontSize: 13),
           ),
@@ -162,16 +186,28 @@ class RiderTripPanel extends StatelessWidget {
         ],
         if (review) ...[
           const SizedBox(height: 16),
-          TripAction(label: 'Đồng ý', onTap: onApprove, busy: busy),
+          TripAction(
+            label: 'Đồng ý · ${moneyVnd(p?.amount)}',
+            onTap: onApprove,
+            busy: busy,
+          ),
           const SizedBox(height: 8),
           TripAction(
-            label: 'Từ chối',
+            label: 'Từ chối và tìm tài xế khác',
             onTap: onReject,
             busy: busy,
             secondary: true,
           ),
+          const Padding(
+            padding: EdgeInsets.only(top: 6),
+            child: Text(
+              'Hệ thống sẽ tìm tài xế khác nếu còn lượt đề xuất.',
+              textAlign: TextAlign.center,
+              style: TextStyle(color: muted, fontSize: 11),
+            ),
+          ),
         ],
-        if (cancel && !review) ...[
+        if (cancel) ...[
           const SizedBox(height: 10),
           TripAction(
             label: 'Hủy chuyến',
@@ -183,6 +219,76 @@ class RiderTripPanel extends StatelessWidget {
       ],
     );
   }
+}
+
+String _failureMessage(TripSnapshot trip) {
+  final rejected = trip.proposals.any(
+    (p) => p.status == ProposalStatus.riderRejected,
+  );
+  return switch (trip.failureReason) {
+    'driver_attempt_limit_reached' =>
+      'Đã hết lượt đề xuất tài xế. Bạn có thể đặt chuyến mới.',
+    'no_driver_available' when rejected =>
+      'Đã từ chối đề xuất trước. Hiện chưa tìm được tài xế khác; bạn có thể thử đặt lại.',
+    'no_driver_available' =>
+      'Chưa tìm được tài xế phù hợp. Bạn có thể thử đặt lại.',
+    _ =>
+      'Không thể tiếp tục tìm tài xế do lỗi hệ thống. Bạn có thể thử đặt lại.',
+  };
+}
+
+class _ReviewMetrics extends StatelessWidget {
+  const _ReviewMetrics({required this.trip});
+  final TripSnapshot trip;
+  @override
+  Widget build(BuildContext context) {
+    final p = trip.currentProposal;
+    return TripCard(
+      color: tripMint,
+      padding: 12,
+      child: Row(
+        children: [
+          const Icon(Icons.route_rounded, color: green),
+          const SizedBox(width: 8),
+          Expanded(
+            child: _metric(
+              'Quãng đường dự kiến',
+              p?.distanceMeters == null
+                  ? 'Đang cập nhật'
+                  : '${(p!.distanceMeters! / 1000).toStringAsFixed(1)} km',
+            ),
+          ),
+          const SizedBox(height: 36, child: VerticalDivider(width: 20)),
+          const Icon(Icons.schedule_rounded, color: green),
+          const SizedBox(width: 8),
+          Expanded(
+            child: _metric(
+              'Thời gian dự kiến',
+              p?.estimatedDurationSeconds == null
+                  ? 'Đang cập nhật'
+                  : '${(p!.estimatedDurationSeconds! / 60).ceil()} phút',
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _metric(String label, String value) => Column(
+    crossAxisAlignment: CrossAxisAlignment.start,
+    children: [
+      Text(label, style: const TextStyle(color: muted, fontSize: 11)),
+      const SizedBox(height: 3),
+      Text(
+        value,
+        style: const TextStyle(
+          color: ink,
+          fontWeight: FontWeight.w800,
+          fontSize: 14,
+        ),
+      ),
+    ],
+  );
 }
 
 class RiderTripHistory extends StatelessWidget {

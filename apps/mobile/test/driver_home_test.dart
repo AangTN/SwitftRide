@@ -166,6 +166,10 @@ void main() {
       final realtime = DriverRealtime();
       await open(t, api, realtime, now: () => now);
       expect(find.text('Lời mời chuyến mới'), findsOneWidget);
+      expect(find.text('Pickup'), findsOneWidget);
+      expect(find.text('Destination'), findsOneWidget);
+      expect(t.widget<Text>(find.text('Pickup')).maxLines, isNull);
+      expect(t.widget<Text>(find.text('Destination')).maxLines, isNull);
       expect(find.byType(TripCountdown), findsOneWidget);
       expect(realtime.watched, [null]);
       api.currentTrip = null;
@@ -176,6 +180,26 @@ void main() {
       await t.pumpWidget(const SizedBox());
     },
   );
+  testWidgets('realtime warning clears after reconnecting', (t) async {
+    final api = DriverApi();
+    final realtime = DriverRealtime();
+    await open(t, api, realtime);
+
+    realtime.emit('disconnected', {});
+    await t.pumpAndSettle();
+    expect(
+      find.text('Mất kết nối cập nhật trực tiếp. Đang kết nối lại…'),
+      findsOneWidget,
+    );
+
+    realtime.emit('connected', {});
+    await t.pumpAndSettle();
+    expect(
+      find.text('Mất kết nối cập nhật trực tiếp. Đang kết nối lại…'),
+      findsNothing,
+    );
+    await t.pumpWidget(const SizedBox());
+  });
   testWidgets('income distinguishes cash held from net earnings and fees due', (
     t,
   ) async {
@@ -216,6 +240,73 @@ void main() {
       await t.pumpWidget(const SizedBox());
     },
   );
+  testWidgets('active trip sheet follows finger and collapses by dragging', (
+    t,
+  ) async {
+    final api = DriverApi()..currentTrip = driverTrip('EnRoute', 5);
+    await open(t, api, DriverRealtime());
+    final title = find.text('Đang đến đón khách');
+    final start = t.getTopLeft(title);
+    expect(find.text('Điểm đón'), findsOneWidget);
+    expect(find.text('Đã đón khách'), findsOneWidget);
+    final gesture = await t.startGesture(t.getCenter(title));
+    await gesture.moveBy(const Offset(0, 90));
+    await t.pump();
+    expect(t.getTopLeft(title).dy, closeTo(start.dy + 90, 1));
+    await gesture.moveBy(const Offset(0, 400));
+    await gesture.up();
+    await t.pumpAndSettle();
+    expect(find.text('Điểm đón'), findsNothing);
+    expect(find.text('Đã đón khách'), findsNothing);
+    expect(find.text('Đang đến đón khách'), findsOneWidget);
+    await t.fling(title, const Offset(0, -300), 1000);
+    await t.pumpAndSettle();
+    expect(find.text('Điểm đón'), findsOneWidget);
+    expect(find.text('Đã đón khách'), findsOneWidget);
+    await t.pumpWidget(const SizedBox());
+  });
+  testWidgets('new driver invitation vibrates the phone once', (t) async {
+    final methods = <String>[];
+    TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+        .setMockMethodCallHandler(SystemChannels.platform, (call) async {
+          methods.add(call.method);
+          return null;
+        });
+    addTearDown(
+      () => TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+          .setMockMethodCallHandler(SystemChannels.platform, null),
+    );
+    final api = DriverApi();
+    final realtime = DriverRealtime();
+    await open(t, api, realtime);
+    api.currentTrip = driverTrip('AwaitingDriverResponse', 4);
+    realtime.emit('DriverInvitation', {
+      'tripId': 'trip-1',
+      'proposalId': 'proposal-1',
+      'expiresAt': DateTime.now()
+          .add(const Duration(seconds: 30))
+          .toIso8601String(),
+    });
+    await t.pumpAndSettle();
+    expect(find.text('Lời mời chuyến mới'), findsOneWidget);
+    expect(
+      methods.where((method) => method == 'HapticFeedback.vibrate'),
+      hasLength(1),
+    );
+    realtime.emit('DriverInvitation', {
+      'tripId': 'trip-1',
+      'proposalId': 'proposal-1',
+      'expiresAt': DateTime.now()
+          .add(const Duration(seconds: 30))
+          .toIso8601String(),
+    });
+    await t.pumpAndSettle();
+    expect(
+      methods.where((method) => method == 'HapticFeedback.vibrate'),
+      hasLength(1),
+    );
+    await t.pumpWidget(const SizedBox());
+  });
   testWidgets('pickup switches map from pickup leg to destination leg', (
     t,
   ) async {
@@ -295,6 +386,10 @@ void main() {
       final api = DriverApi()..availabilityStatus = 'Available';
       await open(t, api, DriverRealtime());
       expect(find.text('Đang chờ chuyến'), findsOneWidget);
+      final map = t.widget<GoongMap>(find.byType(GoongMap));
+      expect(map.initialTarget?.latitude, 10.78);
+      expect(map.initialTarget!.longitude, closeTo(106.70, 0.000001));
+      expect(map.driverPoint?.latitude, 10.78);
       final initial = api.gpsUpdates;
       expect(initial, greaterThan(0));
       await t.pump(const Duration(seconds: 21));

@@ -96,6 +96,32 @@ class Brand extends StatelessWidget {
   );
 }
 
+class BrandBadge extends StatelessWidget {
+  const BrandBadge({super.key, this.size = 21});
+  final double size;
+  @override
+  Widget build(BuildContext context) => DecoratedBox(
+    decoration: BoxDecoration(
+      color: Colors.white,
+      borderRadius: BorderRadius.circular(size * .9),
+      boxShadow: [
+        BoxShadow(
+          color: Colors.black.withValues(alpha: .1),
+          blurRadius: 6,
+          offset: const Offset(0, 2),
+        ),
+      ],
+    ),
+    child: Padding(
+      padding: EdgeInsets.symmetric(
+        horizontal: size * .43,
+        vertical: size * .18,
+      ),
+      child: Brand(size: size),
+    ),
+  );
+}
+
 class AuthScreen extends StatefulWidget {
   const AuthScreen({super.key, required this.role, this.api});
   final AppRole role;

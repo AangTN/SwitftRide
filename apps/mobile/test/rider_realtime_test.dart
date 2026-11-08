@@ -103,7 +103,8 @@ void main() {
     api.onGet = () => slow.future;
     realtime.emit('TripChanged', {'tripId': 'trip-1', 'stateVersion': 5});
     await tester.pumpAndSettle();
-    await tester.tap(find.text('Đồng ý'));
+    await tester.ensureVisible(find.textContaining('Đồng ý ·'));
+    await tester.tap(find.textContaining('Đồng ý ·'));
     await tester.pumpAndSettle();
     expect(find.text('Chờ tài xế xác nhận'), findsOneWidget);
     slow.complete(trip('AwaitingRiderApproval', 4));

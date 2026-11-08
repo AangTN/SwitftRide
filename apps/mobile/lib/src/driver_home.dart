@@ -2,10 +2,12 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:maplibre_gl/maplibre_gl.dart';
+import 'package:pointer_interceptor/pointer_interceptor.dart';
 import 'package:url_launcher/url_launcher.dart';
-import 'app.dart' show Brand, green, ink, muted;
+import 'app.dart' show BrandBadge, green, ink, muted;
 import 'auth.dart';
 import 'goong_map.dart';
+import 'haptics.dart';
 import 'trip_api.dart';
 import 'trip_models.dart';
 import 'trip_realtime.dart';
@@ -43,6 +45,7 @@ class _DriverHomeState extends State<DriverHome> with WidgetsBindingObserver {
   final _activePanelKey = GlobalKey();
   double _activePanelHeight = 0;
   LatLng? driverLocation;
+  LatLng? waitingMapTarget;
   Future<Object?>? earningsFuture;
   Future<TripHistoryPage>? historyFuture;
   Timer? heartbeat;
@@ -50,6 +53,7 @@ class _DriverHomeState extends State<DriverHome> with WidgetsBindingObserver {
   bool accountConnected = false;
   bool pendingInvitation = false;
   String? watchedTrip;
+  String? vibratedProposalId;
   Future<void> _watch(String? id) async {
     if (accountConnected && watchedTrip == id) return;
     accountConnected = true;
@@ -62,6 +66,7 @@ class _DriverHomeState extends State<DriverHome> with WidgetsBindingObserver {
       refreshAgain = false,
       sendingGps = false;
   bool online = false, busy = false, loading = true;
+  bool realtimeDisconnected = false;
   String? error;
   DateTime? invitationExpiry;
   Timer? clock;
@@ -101,8 +106,15 @@ class _DriverHomeState extends State<DriverHome> with WidgetsBindingObserver {
         (trip?.id == value.id && trip!.stateVersion > value.stateVersion)) {
       return;
     }
+    if (value.status == TripStatus.awaitingDriverResponse &&
+        value.currentProposal?.id != null &&
+        value.currentProposal!.id != vibratedProposalId) {
+      vibratedProposalId = value.currentProposal!.id;
+      unawaited(vibrateProposal());
+    }
     setState(() {
       trip = value;
+      waitingMapTarget = null;
       if (route?.matches(value) != true) route = null;
       invitationExpiry = value.status == TripStatus.awaitingDriverResponse
           ? value.currentProposal?.driverResponseDeadline
@@ -170,11 +182,14 @@ class _DriverHomeState extends State<DriverHome> with WidgetsBindingObserver {
       if (trip != null && _assigned(trip!) && trip!.id != id) return;
       unawaited(_loadTrip(id, invitationProposal: proposal));
     } else if (event.name == 'connected') {
+      if (realtimeDisconnected) {
+        setState(() => realtimeDisconnected = false);
+      }
       unawaited(_restore());
     } else if (event.name == 'disconnected') {
-      setState(
-        () => error = 'Mất kết nối cập nhật trực tiếp. Đang kết nối lại…',
-      );
+      if (!realtimeDisconnected) {
+        setState(() => realtimeDisconnected = true);
+      }
     } else if ({
           'TripChanged',
           'RideCompleted',
@@ -262,7 +277,10 @@ class _DriverHomeState extends State<DriverHome> with WidgetsBindingObserver {
         ),
       );
       if (!mounted) return;
-      setState(() => driverLocation = LatLng(p.latitude, p.longitude));
+      setState(() {
+        driverLocation = LatLng(p.latitude, p.longitude);
+        if (online && trip == null) waitingMapTarget ??= driverLocation;
+      });
       await trips.updateGps(p.latitude, p.longitude);
     } catch (_) {
       if (mounted) {
@@ -359,6 +377,7 @@ class _DriverHomeState extends State<DriverHome> with WidgetsBindingObserver {
         );
         await trips.updateGps(p.latitude, p.longitude);
         driverLocation = LatLng(p.latitude, p.longitude);
+        if (trip == null) waitingMapTarget = driverLocation;
         await _startGpsStream(requestPermission: false);
         online = true;
       } else {
@@ -368,6 +387,7 @@ class _DriverHomeState extends State<DriverHome> with WidgetsBindingObserver {
         await gps?.cancel();
         gps = null;
         online = false;
+        waitingMapTarget = null;
       }
     } catch (e) {
       error = '$e';
@@ -399,6 +419,7 @@ class _DriverHomeState extends State<DriverHome> with WidgetsBindingObserver {
       } else {
         trip = null;
         route = null;
+        waitingMapTarget = driverLocation;
         await _watch(null);
       }
     } catch (e) {
@@ -448,6 +469,7 @@ class _DriverHomeState extends State<DriverHome> with WidgetsBindingObserver {
     setState(() {
       trip = null;
       route = null;
+      waitingMapTarget = driverLocation;
       invitationExpiry = null;
       error = null;
       historyFuture = null;
@@ -518,6 +540,7 @@ class _DriverHomeState extends State<DriverHome> with WidgetsBindingObserver {
       children: [
         Positioned.fill(
           child: GoongMap(
+            initialTarget: online && trip == null ? waitingMapTarget : null,
             bottomInset: _activePanelHeight > 0
                 ? _activePanelHeight
                 : MediaQuery.sizeOf(context).height * .54,
@@ -539,18 +562,24 @@ class _DriverHomeState extends State<DriverHome> with WidgetsBindingObserver {
                 trip?.status == TripStatus.enRoute,
           ),
         ),
-        Positioned(
-          top: 0,
-          left: 0,
-          right: 0,
-          child: SafeArea(
-            child: Padding(
-              padding: const EdgeInsets.all(18),
-              child: Row(children: [const Brand(size: 25)]),
+        if (trip == null ||
+            trip!.status == TripStatus.cancelled ||
+            trip!.status == TripStatus.failed)
+          Positioned(
+            top: 0,
+            left: 0,
+            right: 0,
+            child: SafeArea(
+              child: Padding(
+                padding: const EdgeInsets.all(18),
+                child: Row(children: const [BrandBadge()]),
+              ),
             ),
           ),
+        Align(
+          alignment: Alignment.bottomCenter,
+          child: PointerInterceptor(child: _panel()),
         ),
-        Align(alignment: Alignment.bottomCenter, child: _panel()),
       ],
     );
   }
@@ -582,6 +611,13 @@ class _DriverHomeState extends State<DriverHome> with WidgetsBindingObserver {
             ),
             const SizedBox(height: 12),
           ],
+          if (realtimeDisconnected) ...[
+            const Text(
+              'Mất kết nối cập nhật trực tiếp. Đang kết nối lại…',
+              style: TextStyle(color: Colors.red, fontSize: 12),
+            ),
+            const SizedBox(height: 12),
+          ],
           TripAction(
             label: online ? 'Tắt nhận chuyến' : 'Bật nhận chuyến',
             onTap: _toggleOnline,
@@ -610,16 +646,16 @@ class _DriverHomeState extends State<DriverHome> with WidgetsBindingObserver {
             )
           : null,
       children: [
-        TripPersonCard(
-          name: t.riderName ?? 'Khách hàng',
-          subtitle: approaching || picked
-              ? t.riderPhone
-              : 'Khách hàng SwiftRide',
-          onCall: t.riderPhone != null && (approaching || picked)
-              ? () => launchUrl(Uri(scheme: 'tel', path: t.riderPhone))
-              : null,
-        ),
-        const SizedBox(height: 12),
+        if (!picked) ...[
+          TripPersonCard(
+            name: t.riderName ?? 'Khách hàng',
+            subtitle: approaching ? t.riderPhone : 'Khách hàng SwiftRide',
+            onCall: t.riderPhone != null && approaching
+                ? () => launchUrl(Uri(scheme: 'tel', path: t.riderPhone))
+                : null,
+          ),
+          const SizedBox(height: 12),
+        ],
         if (approaching) ...[
           TripEta(
             text:
@@ -645,42 +681,34 @@ class _DriverHomeState extends State<DriverHome> with WidgetsBindingObserver {
           const SizedBox(height: 12),
         ],
         if (invite)
-          ExpansionTile(
-            dense: true,
-            visualDensity: VisualDensity.compact,
-            tilePadding: EdgeInsets.zero,
-            leading: const Icon(Icons.route_rounded, color: green, size: 20),
-            title: Text(
-              '${t.pickupAddress.split(',').first} → ${t.destinationAddress.split(',').first}',
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w600),
-            ),
-            children: [TripJourneyCard(trip: t)],
+          TripJourneyCard(trip: t, fullAddress: true)
+        else if (approaching)
+          TripStopCard(
+            label: 'Điểm đón',
+            address: t.pickupAddress,
+            icon: Icons.trip_origin_rounded,
           )
+        else if (picked)
+          TripStopCard(label: 'Điểm đến', address: t.destinationAddress)
         else
-          ExpansionTile(
-            tilePadding: EdgeInsets.zero,
-            title: Text(
-              picked ? t.destinationAddress : t.pickupAddress,
-              style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600),
-              maxLines: 2,
-              overflow: TextOverflow.ellipsis,
-            ),
-            subtitle: Text(
-              picked ? 'Điểm đến' : 'Điểm đón',
-              style: const TextStyle(fontSize: 11, color: muted),
-            ),
-            leading: const Icon(Icons.location_on_rounded, color: green),
-            children: [TripJourneyCard(trip: t)],
-          ),
+          TripJourneyCard(trip: t),
         const SizedBox(height: 12),
-        TripMetrics(trip: t),
-        const SizedBox(height: 8),
-        TripPaymentMethodLabel(trip: t),
+        if (invite) ...[
+          TripMetrics(trip: t),
+          const SizedBox(height: 8),
+          TripPaymentMethodLabel(trip: t),
+        ],
+        if (!invite) TripFareSummary(trip: t),
         if (error != null) ...[
           const SizedBox(height: 10),
           Text(error!, style: const TextStyle(color: Colors.red, fontSize: 12)),
+        ],
+        if (realtimeDisconnected) ...[
+          const SizedBox(height: 10),
+          const Text(
+            'Mất kết nối cập nhật trực tiếp. Đang kết nối lại…',
+            style: TextStyle(color: Colors.red, fontSize: 12),
+          ),
         ],
         const SizedBox(height: 16),
         if (invite)

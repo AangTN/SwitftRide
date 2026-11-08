@@ -4,8 +4,9 @@ import 'package:flutter/material.dart';
 import 'package:flutter/gestures.dart';
 import 'package:pointer_interceptor/pointer_interceptor.dart';
 
-import 'app.dart' show Brand, green, muted;
+import 'app.dart' show BrandBadge, green, muted;
 import 'goong_map.dart';
+import 'haptics.dart';
 import 'ride_locations.dart';
 import 'places_api.dart';
 import 'auth.dart';
@@ -64,6 +65,7 @@ class _RiderHomeState extends State<RiderHome>
   TripRealtimeClient? _realtime;
   StreamSubscription<TripRealtimeEvent>? _realtimeSubscription;
   String? _watchedTripId;
+  String? _vibratedProposalId;
   LatLng? _driverPoint;
   DateTime? _driverRecordedAt;
   bool _realtimeDisconnected = false;
@@ -133,6 +135,12 @@ class _RiderHomeState extends State<RiderHome>
     final previous = _currentTrip;
     if (previous?.id == trip.id && previous!.stateVersion > trip.stateVersion) {
       return false;
+    }
+    if (trip.status == TripStatus.awaitingRiderApproval &&
+        trip.currentProposal?.id != null &&
+        trip.currentProposal!.id != _vibratedProposalId) {
+      _vibratedProposalId = trip.currentProposal!.id;
+      unawaited(vibrateProposal());
     }
     setState(() {
       _currentTrip = trip;
@@ -616,44 +624,31 @@ class _RiderHomeState extends State<RiderHome>
                 : LatLng(trip.destinationLatitude, trip.destinationLongitude),
           ),
         ),
-        const Positioned(
-          top: 0,
-          left: 0,
-          right: 0,
-          child: SafeArea(
-            bottom: false,
-            child: Padding(
-              padding: EdgeInsets.all(18),
-              child: Align(
-                alignment: Alignment.centerLeft,
-                child: Brand(size: 27),
-              ),
-            ),
-          ),
-        ),
         Align(
           alignment: Alignment.bottomCenter,
-          child: RiderTripPanel(
-            key: _activePanelKey,
-            trip: trip,
-            route: _tripRoute,
-            progress:
-                _progress?.tripId == trip.id &&
-                    _progress?.stageVersion ==
-                        (trip.status == TripStatus.pickedUp ? 2 : 1)
-                ? _progress
-                : null,
-            busy: _tripBusy,
-            error:
-                _tripError ??
-                (_realtimeDisconnected
-                    ? 'Mất kết nối cập nhật trực tiếp. Đang kết nối lại…'
-                    : null),
-            now: _now,
-            onApprove: _approveProposal,
-            onReject: _rejectProposal,
-            onCancel: _cancelTrip,
-            onDismiss: _dismissTrip,
+          child: PointerInterceptor(
+            child: RiderTripPanel(
+              key: _activePanelKey,
+              trip: trip,
+              route: _tripRoute,
+              progress:
+                  _progress?.tripId == trip.id &&
+                      _progress?.stageVersion ==
+                          (trip.status == TripStatus.pickedUp ? 2 : 1)
+                  ? _progress
+                  : null,
+              busy: _tripBusy,
+              error:
+                  _tripError ??
+                  (_realtimeDisconnected
+                      ? 'Mất kết nối cập nhật trực tiếp. Đang kết nối lại…'
+                      : null),
+              now: _now,
+              onApprove: _approveProposal,
+              onReject: _rejectProposal,
+              onCancel: _cancelTrip,
+              onDismiss: _dismissTrip,
+            ),
           ),
         ),
       ],
@@ -750,7 +745,7 @@ class _RiderHomeState extends State<RiderHome>
                           padding: EdgeInsets.all(18),
                           child: Align(
                             alignment: Alignment.centerLeft,
-                            child: Brand(size: 27),
+                            child: BrandBadge(),
                           ),
                         ),
                       ),
