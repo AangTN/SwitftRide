@@ -24,6 +24,7 @@ class GoongMap extends StatefulWidget {
     this.destinationPoint,
     this.driverPoint,
     this.driverApproaching = false,
+    this.bottomInset = 0,
   });
 
   final bool interactive;
@@ -34,6 +35,7 @@ class GoongMap extends StatefulWidget {
   final LatLng? destinationPoint;
   final LatLng? driverPoint;
   final bool driverApproaching;
+  final double bottomInset;
 
   @override
   State<GoongMap> createState() => GoongMapState();
@@ -46,6 +48,7 @@ class GoongMapState extends State<GoongMap> {
   String? _error;
   Timer? _loadTimer;
   bool _ready = false;
+  List<LatLng> _fittedRoute = const [];
   int _attempt = 0;
   LatLng _target = downtown;
   bool _focusPending = false;
@@ -79,7 +82,9 @@ class GoongMapState extends State<GoongMap> {
   void didUpdateWidget(GoongMap oldWidget) {
     super.didUpdateWidget(oldWidget);
     if (oldWidget.interactive != widget.interactive) _restartPulse();
-    if (!listEquals(oldWidget.routePoints, widget.routePoints) ||
+    if (oldWidget.bottomInset != widget.bottomInset) _fittedRoute = const [];
+    if (oldWidget.bottomInset != widget.bottomInset ||
+        !listEquals(oldWidget.routePoints, widget.routePoints) ||
         oldWidget.pickupPoint != widget.pickupPoint ||
         oldWidget.destinationPoint != widget.destinationPoint ||
         oldWidget.driverPoint != widget.driverPoint ||
@@ -114,6 +119,34 @@ class GoongMapState extends State<GoongMap> {
         _driverVehicle = null;
       }
       if (widget.routePoints.length > 1) {
+        if (!listEquals(_fittedRoute, widget.routePoints)) {
+          var south = widget.routePoints.first.latitude, north = south;
+          var west = widget.routePoints.first.longitude, east = west;
+          for (final point in widget.routePoints) {
+            if (point.latitude < south) south = point.latitude;
+            if (point.latitude > north) north = point.latitude;
+            if (point.longitude < west) west = point.longitude;
+            if (point.longitude > east) east = point.longitude;
+          }
+          if (!mounted) return;
+          await controller.animateCamera(
+            CameraUpdate.newLatLngBounds(
+              LatLngBounds(
+                southwest: LatLng(south - .0003, west - .0003),
+                northeast: LatLng(north + .0003, east + .0003),
+              ),
+              left: 32,
+              top: 90,
+              right: 32,
+              bottom: (widget.bottomInset + 24).clamp(
+                0,
+                ((context.findRenderObject() as RenderBox).size.height - 150)
+                    .clamp(0, double.infinity),
+              ),
+            ),
+          );
+          _fittedRoute = List.of(widget.routePoints);
+        }
         _tripLine = await controller.addLine(
           LineOptions(
             geometry: widget.routePoints,
@@ -245,6 +278,8 @@ class GoongMapState extends State<GoongMap> {
       _style = null;
       _error = null;
       _ready = false;
+      _fittedRoute = const [];
+      _vehicleIconReady = false;
     });
     if (goongMaptilesKey.isEmpty) {
       setState(() => _error = 'Chưa có cấu hình bản đồ Goong.');

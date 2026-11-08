@@ -43,9 +43,10 @@ public sealed class PaymentReliabilityTests
     }
 
     [Theory]
-    [InlineData(false)]
-    [InlineData(true)]
-    public async Task Broker_request_is_idempotent_and_outbox_returns_trip_request_id(bool insufficient)
+    [InlineData(false, "Wallet")]
+    [InlineData(true, "Wallet")]
+    [InlineData(false, "Cash")]
+    public async Task Broker_request_is_idempotent_and_outbox_returns_trip_request_id(bool insufficient, string method)
     {
         await using var factory = new PaymentFactory { Messaging = true };
         await factory.InitializeAsync();
@@ -55,7 +56,7 @@ public sealed class PaymentReliabilityTests
         var observer = new CompletionObserver();
         using var handle = bus.ConnectConsumeObserver(observer);
         var request = Request() with { RiderId = insufficient ? PaymentDevelopmentAccounts.BrokeRiderId : PaymentDevelopmentAccounts.RiderId };
-        var message = new PaymentRequested(request.IdempotencyKey, request.TripId, request.RiderId, request.DriverId, request.Amount, "VND");
+        var message = new PaymentRequested(request.IdempotencyKey, request.TripId, request.RiderId, request.DriverId, request.Amount, "VND", method);
         for (var i = 0; i < 2; i++)
         {
             await bus.Publish(message);
@@ -65,6 +66,7 @@ public sealed class PaymentReliabilityTests
         await using var scope = factory.Services.CreateAsyncScope();
         var db = scope.ServiceProvider.GetRequiredService<PaymentDbContext>();
         var payment = await db.Payments.SingleAsync(x => x.TripId == request.TripId);
+        Assert.Equal(method, payment.Method);
         Assert.Equal(insufficient ? PaymentStatus.Failed : PaymentStatus.Succeeded, payment.Status);
         Assert.Single(await db.OutboxMessages.ToListAsync());
         Assert.Equal(insufficient ? 0 : 1, await db.LedgerTransactions.CountAsync(x => x.PaymentId == payment.Id));

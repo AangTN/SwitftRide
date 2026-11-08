@@ -82,7 +82,7 @@ public sealed class MatchingWorkflowTests
         Assert.Equal(f.Clock.GetUtcNow().AddSeconds(30), p.DriverResponseDeadline);
         Assert.Equal(1, f.Realtime.Invitations);
         await f.Controller(f.Driver, "Driver").DriverAccept(trip.Id, new DriverProposalRequest(p.Id, trip.StateVersion), default);
-        Assert.Equal(TripStatus.DriverAccepted, trip.Status);
+        Assert.Equal(TripStatus.EnRoute, trip.Status);
         Assert.Equal(f.Driver, trip.DriverId);
         Assert.Equal(25000, trip.AgreedAmount);
         f.Db.ChangeTracker.Clear();
@@ -90,6 +90,18 @@ public sealed class MatchingWorkflowTests
         Assert.Equal("avatars/driver.webp", saved.DriverAvatarImageKeySnapshot);
         Assert.Equal("avatars/driver.webp", Assert.Single(saved.Proposals).DriverAvatarImageKeySnapshot);
         Assert.Single(await f.Db.OutboxMessages.Where(x => x.Kind == TripMessageKind.ConfirmDriver).ToListAsync());
+    }
+
+    [Fact]
+    public async Task Legacy_accepted_trip_can_pick_up_without_separate_en_route_action()
+    {
+        await using var f = new Fixture();
+        var trip = await f.AcceptedTrip();
+        await f.Controller(f.Driver, "Driver").Pickup(trip.Id, new VersionRequest(trip.StateVersion), default);
+        Assert.Equal(TripStatus.PickedUp, trip.Status);
+        Assert.NotNull(trip.PickedUpAt);
+        Assert.Contains(trip.History, x => x.ToStatus == TripStatus.EnRoute);
+        Assert.Contains(trip.History, x => x.ToStatus == TripStatus.PickedUp);
     }
 
     [Fact]
@@ -198,6 +210,23 @@ public sealed class MatchingWorkflowTests
         Assert.Equal("Pending", trip.PaymentStatus);
         Assert.Single(await f.Db.OutboxMessages.Where(x => x.Kind == TripMessageKind.ReleaseDriver).ToListAsync());
         Assert.Single(await f.Db.OutboxMessages.Where(x => x.Kind == TripMessageKind.RequestPayment).ToListAsync());
+    }
+
+    [Theory]
+    [InlineData("Wallet")]
+    [InlineData("Cash")]
+    public async Task Dropoff_queues_the_saved_method_and_releases_driver_before_payment_result(string method)
+    {
+        await using var f = new Fixture();
+        var trip = await f.AcceptedTrip(); trip.Status = TripStatus.PickedUp; trip.PaymentMethod = method;
+        await f.Db.SaveChangesAsync();
+        await f.Controller(f.Driver, "Driver").Dropoff(trip.Id, new VersionRequest(trip.StateVersion), default);
+        var queued = await f.Db.OutboxMessages.SingleAsync(x => x.Kind == TripMessageKind.RequestPayment);
+        var message = System.Text.Json.JsonSerializer.Deserialize<PaymentRequested>(queued.Payload)!;
+        Assert.Equal(method, message.PaymentMethod);
+        Assert.Equal(trip.AgreedAmount, message.Amount);
+        Assert.Equal(TripStatus.PaymentPending, trip.Status);
+        Assert.Single(await f.Db.OutboxMessages.Where(x => x.Kind == TripMessageKind.ReleaseDriver).ToListAsync());
     }
 
     [Fact]

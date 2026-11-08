@@ -23,6 +23,7 @@ public sealed class Trip
     public string? QuoteId { get; set; }
     public decimal? AgreedAmount { get; set; }
     public string Currency { get; set; } = "VND";
+    public string PaymentMethod { get; set; } = "Wallet";
     public string? DriverNameSnapshot { get; set; }
     public string? DriverAvatarImageKeySnapshot { get; set; }
     public string? PlateNumberSnapshot { get; set; }

@@ -146,7 +146,8 @@ void main() {
       api.onCreate = () async => trip('Matching', 1);
       await open(tester, api, FakeRealtime());
       await tester.tap(find.text('Thử lại yêu cầu đặt xe'));
-      await tester.pumpAndSettle();
+      await tester.pump(const Duration(milliseconds: 300));
+      await tester.pump();
       expect(api.sentKey, pending.key);
       expect(api.sentBody, pending.request);
       expect(await api.readPending(), isNull);

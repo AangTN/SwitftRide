@@ -62,7 +62,7 @@ public sealed class PaymentService(
         if (existingByTrip is not null)
             throw new ApiFailure(409, "trip_payment_exists", "This trip already has a payment. Reuse the original request key.");
 
-        await store.LockWalletAsync(request.RiderId, request.Currency, ct);
+        if (gateway.Method == "Wallet") await store.LockWalletAsync(request.RiderId, request.Currency, ct);
 
         var now = UtcNow();
         var payment = new Domain.Payment
@@ -158,7 +158,7 @@ public sealed class PaymentService(
 
         await store.LockTripAsync(payment.TripId, ct);
         payment = (await store.FindPaymentByIdAsync(paymentId, ct))!;
-        await store.LockWalletAsync(payment.RiderId, payment.Currency, ct);
+        if (payment.Method == "Wallet") await store.LockWalletAsync(payment.RiderId, payment.Currency, ct);
 
         if (payment.Status == PaymentStatus.Refunded)
         {
@@ -264,14 +264,24 @@ public sealed class PaymentService(
             p.Id,
             p.TripId,
             p.Amount - Math.Round(p.Amount * PlatformCommissionRate, 2),
-            p.PaidAt ?? p.UpdatedAt)).ToList();
+            p.PaidAt ?? p.UpdatedAt,
+            p.Method,
+            p.Amount,
+            Math.Round(p.Amount * PlatformCommissionRate, 2))).ToList();
+        var cash = payments.Where(p => p.Method == "Cash").ToList();
+        var receivable = await store.FindAccountByCodeAndOwnerAsync(LedgerAccountCodes.DriverCashReceivable, driverId, "VND", ct);
+        var cashDue = receivable is null ? 0 : Math.Max(0, -await store.GetAccountBalanceAsync(receivable.Id, ct));
 
         return new DriverEarningsDto(
             driverId,
             totalEarnings,
             payments.Count,
             "VND",
-            items);
+            items,
+            cash.Sum(p => p.Amount),
+            cash.Sum(p => p.Amount - Math.Round(p.Amount * PlatformCommissionRate, 2)),
+            payments.Where(p => p.Method != "Cash").Sum(p => p.Amount - Math.Round(p.Amount * PlatformCommissionRate, 2)),
+            cashDue);
     }
 
     public async Task<WalletBalanceDto> GetRiderWalletAsync(Guid riderId, string currency = "VND", CancellationToken ct = default)
@@ -315,5 +325,6 @@ public sealed class PaymentService(
             p.FailureCode,
             p.PaidAt,
             p.CreatedAt,
-            p.UpdatedAt);
+            p.UpdatedAt,
+            p.Method);
 }

@@ -5,7 +5,7 @@ Hai ứng dụng Flutter dùng chung source và design system, có hai entrypoin
 - `lib/main_rider.dart`: khách hàng; Android ID `vn.swiftride.rider`.
 - `lib/main_driver.dart`: tài xế; Android ID `vn.swiftride.driver`.
 
-Đã có đăng nhập số điện thoại → OTP, đăng ký khách hàng, lưu/khôi phục phiên, hồ sơ từ API và đăng xuất. App khách hỗ trợ tìm địa điểm, đặt chuyến với `Idempotency-Key`, khôi phục chuyến hiện tại, duyệt/từ chối giá tài xế, theo dõi trạng thái/tuyến/ETA, trạng thái thanh toán và lịch sử chuyến. App khách dùng SignalR qua Gateway để cập nhật trạng thái, GPS và tuyến. Khi mở lại hoặc reconnect, app tải lại snapshot và tuyến. Menu khách gồm Trang chủ, Chuyến đi và Tài khoản; thanh toán demo do backend xử lý bằng ví SwiftRide. App tài xế đã nối bật/tắt nhận chuyến, lời mời 30 giây qua SignalR, nhận/từ chối, đến đón/đón khách/trả khách, tuyến theo chặng, lịch sử và thu nhập. Kết nối tài khoản được mở trước khi có lời mời; chỉ SubscribeTrip sau khi được gán chuyến. Khôi phục online qua GET /api/matching/drivers/me/availability; gửi GPS khi di chuyển và heartbeat mỗi 20 giây khi đứng yên. Trả khách xong có thể tiếp tục nhận chuyến trong khi backend xử lý thanh toán.
+Đã có đăng nhập số điện thoại → OTP, đăng ký khách hàng, lưu/khôi phục phiên, hồ sơ từ API và đăng xuất. App khách hỗ trợ tìm địa điểm, đặt chuyến với `Idempotency-Key`, khôi phục chuyến hiện tại, duyệt/từ chối giá tài xế, theo dõi trạng thái/tuyến/ETA, trạng thái thanh toán và lịch sử chuyến. App khách dùng SignalR qua Gateway để cập nhật trạng thái, GPS và tuyến. Khi mở lại hoặc reconnect, app tải lại snapshot và tuyến. Menu khách gồm Trang chủ, Chuyến đi và Tài khoản; thanh toán do backend xử lý theo lựa chọn Tiền mặt hoặc Ví SwiftRide demo. App tài xế đã nối bật/tắt nhận chuyến, lời mời 30 giây qua SignalR, nhận/từ chối, đến đón/đón khách/trả khách, tuyến theo chặng, lịch sử và thu nhập. Kết nối tài khoản được mở trước khi có lời mời; chỉ SubscribeTrip sau khi được gán chuyến. Khôi phục online qua GET /api/matching/drivers/me/availability; gửi GPS khi di chuyển và heartbeat mỗi 20 giây khi đứng yên. Trả khách xong có thể tiếp tục nhận chuyến trong khi backend xử lý thanh toán.
 
 Tài xế seed chỉ có Driver. Muốn dùng app khách, chọn Đăng ký tài khoản với cùng SĐT và nhập tên hiển thị; OTP hợp lệ sẽ thêm Rider vào cùng user. Nếu thử đăng nhập app khách bằng tài khoản Driver-only, app hướng sang form kích hoạt này. Tên khách có thể đổi ở màn tài khoản; tên và xe của tài xế được lấy từ Matching, hoàn toàn độc lập. Chi tiết chuyển dữ liệu: [driver-profile-migration.md](../../docs/driver-profile-migration.md).
 
@@ -102,3 +102,20 @@ Bao phủ chuẩn hóa SĐT, payload đăng ký, lỗi OTP, chặn Rider vào Dr
 Font Be Vietnam Pro được đóng gói kèm giấy phép `assets/fonts/OFL.txt`.
 Prompt gốc và tên file của hai ảnh: [assets/IMAGES.md](assets/IMAGES.md).
 Hai ảnh AI mới được tạo bằng công cụ imagegen tích hợp và lưu dạng WebP tối ưu tại `assets/images/rider-hero.webp` và `assets/images/driver-hero.webp`, theo phong cách ảnh mẫu người dùng. Không nhúng toàn bộ ảnh chụp giao diện làm màn hình. Mô tả prompt: minh họa thương mại anime tươi sáng tại đô thị Việt Nam, xe máy và đồng phục xanh emerald, trời cyan và cây xanh; bản khách có nữ hành khách cùng tài xế trên xe trắng, bản tài xế nhìn từ sau với điện thoại bản đồ nổi; không chữ, logo hay khung UI. Logo và icon được dựng bằng code/vector.
+
+## Luồng thao tác đặt và nhận chuyến
+
+- Khách chọn đủ hai địa điểm và loại xe, bấm **Đặt xe** để tạo chuyến ngay. Chỉ hiển thị nút thử lại trên trang chủ khi yêu cầu trước chưa rõ kết quả; giữ nguyên body và Idempotency-Key.
+- Tài xế nhận chuyến chuyển ngay sang **EnRoute**. Backend vẫn lưu bước DriverAccepted trong lịch sử; các chuyến cũ ở DriverAccepted có thể bấm Đã đón khách trực tiếp.
+- Chờ duyệt giá/chờ tài xế nhận dùng tuyến đón → đến; nhận chuyến dùng tuyến tài xế → đón; đã đón khách dùng tuyến đón → đến. Chưa tìm được tài xế chỉ hiển thị hai điểm.
+- Bộ giải mã polyline dùng phép tính số âm tương thích JavaScript trong route_polyline.dart. Không dùng toán tử ~ để giải mã delta âm trên web.
+- Hai app dùng trip_widgets.dart cho thẻ người đi/tài xế, hành trình, giá/quãng đường, trạng thái thanh toán, tổng kết chuyến và menu. Tổng kết bỏ bản đồ, nút tiếp tục cố định phía dưới. Quãng đường là snapshot chặng đón → đến; ETA tới đón hiển thị riêng.
+- Kết quả thanh toán lỗi đọc failureCode qua API Payment có kiểm tra chủ chuyến. wallet_not_found/insufficient_funds là lỗi nghiệp vụ của ví; không tự cấp số dư hoặc đánh dấu thành công. Ví demo có tiền chỉ thuộc tài khoản seed, không áp dụng mặc định cho tài khoản đăng ký mới.
+
+Compose demo bật Seed__Enabled cho Payment như Auth/Matching: tài khoản Rider demo được tạo ví và cấp 1.000.000 VND bằng bút toán seed duy nhất, không nạp lại mỗi lần restart. appsettings.json mặc định tắt seed nên chỉ đặt ASPNETCORE_ENVIRONMENT=Development là chưa đủ. Tài khoản đăng ký mới không tự nhận tiền demo; các payment đã Failed vẫn giữ kết quả cũ.
+
+### Thanh toán tiền mặt
+
+- Đặt xe gửi paymentMethod=Cash hoặc Wallet; snapshot chuyến giữ phương thức này cho màn xác nhận, chuyến đang chạy, lịch sử và biên nhận.
+- Chuyến tiền mặt: tài xế bấm **Đã trả khách và thu tiền** sau khi nhận tiền. Trip gửi yêu cầu qua Outbox/RabbitMQ; Payment ghi giao dịch thành công và gửi kết quả về Trip. App vẫn hiển thị đang xử lý trong lúc chờ kết quả.
+- Không trừ ví khách hoặc cộng tiền mặt vào ví tài xế. Thu nhập tách tiền mặt đã thu, thu nhập sau phí, thu nhập qua ví/online và phí tiền mặt cần nộp. Chi tiết và migration: [luồng Payment](../../docs/payment-integration.md).

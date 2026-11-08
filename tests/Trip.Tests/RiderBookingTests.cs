@@ -101,6 +101,32 @@ public sealed class RiderBookingTests
         await Assert.ThrowsAsync<DbUpdateException>(() => f.Db.SaveChangesAsync());
     }
 
+    [Theory]
+    [InlineData("Wallet")]
+    [InlineData("Cash")]
+    public async Task Payment_method_is_saved_at_creation_and_cannot_be_changed_by_replaying_the_key(string method)
+    {
+        await using var f = new Fixture();
+        var created = Assert.IsType<CreatedAtActionResult>(await f.Controller().Create(Request with { PaymentMethod = method }, "method-key", default));
+        var saved = await f.Db.Trips.SingleAsync();
+        Assert.Equal(method, saved.PaymentMethod);
+        var snapshot = System.Text.Json.JsonSerializer.SerializeToElement(created.Value, new System.Text.Json.JsonSerializerOptions(System.Text.Json.JsonSerializerDefaults.Web));
+        Assert.Equal(method, snapshot.GetProperty("paymentMethod").GetString());
+        await f.Controller().Create(Request with { PaymentMethod = method == "Cash" ? "Wallet" : "Cash" }, "method-key", default);
+        Assert.Single(await f.Db.Trips.ToListAsync());
+        Assert.Equal(method, saved.PaymentMethod);
+    }
+
+    [Fact]
+    public async Task Unsupported_payment_method_cannot_create_a_trip_or_message()
+    {
+        await using var f = new Fixture();
+        var failure = await Assert.ThrowsAsync<SwiftRide.ServiceDefaults.ApiFailure>(() => f.Controller().Create(Request with { PaymentMethod = "Other" }, "invalid", default));
+        Assert.Equal(400, failure.Status);
+        Assert.Empty(await f.Db.Trips.ToListAsync());
+        Assert.Empty(await f.Db.OutboxMessages.ToListAsync());
+    }
+
     private static readonly CreateTripRequest Request = new("Pickup", 10.78, 106.69, "Destination", 10.79, 106.70);
 
     private sealed class Fixture : IAsyncDisposable

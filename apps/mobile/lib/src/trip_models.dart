@@ -1,4 +1,5 @@
 import 'package:maplibre_gl/maplibre_gl.dart';
+import 'route_polyline.dart';
 
 enum TripStatus {
   requested,
@@ -40,7 +41,7 @@ enum TripStatus {
     requested || matching => 'Đang tìm tài xế',
     awaitingRiderApproval => 'Xác nhận tài xế và giá',
     awaitingDriverResponse => 'Chờ tài xế xác nhận',
-    driverAccepted => 'Tài xế đang chuẩn bị',
+    driverAccepted => 'Tài xế đang đến',
     enRoute => 'Tài xế đang đến',
     pickedUp => 'Đang di chuyển',
     droppedOff || paymentPending => 'Đang xử lý thanh toán',
@@ -163,7 +164,10 @@ class TripSnapshot {
     this.riderPhone,
     this.agreedAmount,
     this.currency = 'VND',
+    this.paymentMethod = 'Wallet',
     this.paymentId,
+    this.pickedUpAt,
+    this.droppedOffAt,
     this.paymentStatus,
     this.failureReason,
   });
@@ -199,7 +203,10 @@ class TripSnapshot {
       riderPhone: _optionalString(json, 'riderPhoneSnapshot'),
       agreedAmount: _optionalNumber(json, 'agreedAmount'),
       currency: _optionalString(json, 'currency') ?? 'VND',
+      paymentMethod: _optionalString(json, 'paymentMethod') ?? 'Wallet',
       paymentId: _optionalString(json, 'paymentId'),
+      pickedUpAt: _date(json['pickedUpAt']),
+      droppedOffAt: _date(json['droppedOffAt']),
       paymentStatus: _optionalString(json, 'paymentStatus'),
       failureReason: _optionalString(json, 'failureReason'),
     );
@@ -223,7 +230,12 @@ class TripSnapshot {
   final String? riderPhone;
   final double? agreedAmount;
   final String currency;
+  final String paymentMethod;
+  bool get isCash => paymentMethod == 'Cash';
+  String get paymentMethodLabel => isCash ? 'Tiền mặt' : 'Ví SwiftRide';
   final String? paymentId;
+  final DateTime? pickedUpAt;
+  final DateTime? droppedOffAt;
   final String? paymentStatus;
   final String? failureReason;
 
@@ -261,53 +273,9 @@ class TripRouteLeg {
   final int durationSeconds;
   final DateTime? calculatedAt;
 
-  List<LatLng> decode() {
-    final points = <LatLng>[];
-    var index = 0;
-    var latitude = 0;
-    var longitude = 0;
-    while (index < polyline.length) {
-      final latitudeDelta = _decodeValue(index);
-      index = latitudeDelta.$2;
-      latitude += latitudeDelta.$1;
-      if (index >= polyline.length) {
-        throw const FormatException('Incomplete route polyline.');
-      }
-      final longitudeDelta = _decodeValue(index);
-      index = longitudeDelta.$2;
-      longitude += longitudeDelta.$1;
-      final lat = latitude / 1e5;
-      final lon = longitude / 1e5;
-      if (!lat.isFinite ||
-          !lon.isFinite ||
-          lat < -90 ||
-          lat > 90 ||
-          lon < -180 ||
-          lon > 180) {
-        throw const FormatException('Invalid route coordinate.');
-      }
-      points.add(LatLng(lat, lon));
-    }
-    return points;
-  }
-
-  (int, int) _decodeValue(int position) {
-    var result = 0;
-    var shift = 0;
-    while (position < polyline.length) {
-      final value = polyline.codeUnitAt(position++) - 63;
-      if (value < 0 || value > 63 || shift > 30) {
-        throw const FormatException('Invalid route polyline.');
-      }
-      result |= (value & 0x1f) << shift;
-      shift += 5;
-      if (value < 0x20) {
-        final delta = (result & 1) != 0 ? ~(result >> 1) : result >> 1;
-        return (delta, position);
-      }
-    }
-    throw const FormatException('Incomplete route polyline.');
-  }
+  List<LatLng> decode() => decodeRoutePolyline(
+    polyline,
+  ).map((p) => LatLng(p.$1, p.$2)).toList(growable: false);
 }
 
 class TripRouteSnapshot {

@@ -19,6 +19,10 @@
   thể còn trên môi trường đã nâng cấp.
 - Payment dùng sổ cái nội bộ cho ví demo. `ledger_accounts` xác định tài khoản
   sổ cái; số dư được tính từ `ledger_entries`. Chưa có bảng liên kết thẻ/ngân hàng.
+- `TripPaymentMethod` thêm `trips.payment_method` (`Wallet`/`Cash`), mặc định `Wallet`
+  cho dữ liệu cũ. Payment dùng cột `payments.method` đã có. Tiền mặt chỉ ghi phí
+  phải thu tài xế vào tài khoản `DRIVER_CASH_RECEIVABLE`, không ghi có tiền mặt
+  vào ví/tài khoản phải trả tài xế. Xem [luồng Payment](../payment-integration.md).
 - Migration, mapping EF và code MongoDB là nguồn đối chiếu khi cần từng cột
   chính xác. Các file `*.proposed.*`, ảnh và từ điển bên dưới là tài liệu thiết
   kế, có thể khác schema triển khai.

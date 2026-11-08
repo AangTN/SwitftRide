@@ -158,6 +158,11 @@ class TripApi {
           body: {'stateVersion': version},
         ),
       );
+  Future<Map<String, dynamic>?> payment(String tripId) async {
+    final data = await auth.requestAuthenticatedJson('payments/trips/$tripId');
+    return data is Map<String, dynamic> ? data : null;
+  }
+
   Future<Object?> earnings() =>
       auth.requestAuthenticatedJson('payments/drivers/me/earnings');
 

@@ -7,6 +7,7 @@ public static class LedgerAccountCodes
 {
     public const string RiderWallet = "RIDER_WALLET";
     public const string DriverPayable = "DRIVER_PAYABLE";
+    public const string DriverCashReceivable = "DRIVER_CASH_RECEIVABLE";
     public const string PlatformRevenue = "PLATFORM_REVENUE";
     public const string PaymentClearing = "PAYMENT_CLEARING";
     public const string SeedClearing = "SEED_CLEARING";

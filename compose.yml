@@ -166,6 +166,7 @@ services:
     command: [SwiftRide.Payment.Api.dll]
     environment:
       <<: *api-environment
+      Seed__Enabled: "true"
       ConnectionStrings__PaymentDb: Host=postgres;Database=PaymentDB;Username=payment_app;Password=${PAYMENT_DB_PASSWORD}
     ports: ["127.0.0.1:5104:8080"]
     volumes: ["./.secrets/auth-public.pem:/run/keys/auth-public.pem:ro"]

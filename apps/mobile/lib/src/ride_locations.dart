@@ -59,6 +59,9 @@ class RideLocations {
       'destinationAddress': destination.address,
       'destinationLatitude': destination.point!.latitude,
       'destinationLongitude': destination.point!.longitude,
+      'paymentMethod': paymentMethod == RidePaymentMethod.cash
+          ? 'Cash'
+          : 'Wallet',
       'vehicleType': switch (vehicleType) {
         RideVehicleType.motorcycle => 'Motorbike',
         RideVehicleType.car4Seats => 'Car4Seats',
@@ -79,6 +82,7 @@ enum RideVehicleType {
 }
 
 enum RidePaymentMethod {
+  cash('Tiền mặt', Icons.payments_rounded),
   swiftRideWallet('Ví SwiftRide', Icons.account_balance_wallet_rounded);
 
   const RidePaymentMethod(this.label, this.icon);
@@ -452,6 +456,8 @@ class _RideLocationPickerState extends State<RideLocationPicker> {
                       const SizedBox(height: 12),
                       Row(
                         children: [
+                          Expanded(child: _paymentCard(RidePaymentMethod.cash)),
+                          const SizedBox(width: 10),
                           Expanded(
                             child: _paymentCard(
                               RidePaymentMethod.swiftRideWallet,
@@ -482,7 +488,7 @@ class _RideLocationPickerState extends State<RideLocationPicker> {
                     ),
                   ),
                   onPressed: _resolving || _searching ? null : _apply,
-                  child: const Text('Áp dụng'),
+                  child: const Text('Đặt xe'),
                 ),
               ),
             ],
@@ -613,7 +619,7 @@ class _RideLocationPickerState extends State<RideLocationPicker> {
                   SizedBox(
                     height: 63,
                     width: 94,
-                    child: _BookingArt(index: option.index + 1),
+                    child: BookingVehicleArt(index: option.index + 1),
                   ),
                   Text(
                     option.label,
@@ -655,11 +661,7 @@ class _RideLocationPickerState extends State<RideLocationPicker> {
                 color: _bookingAccent,
                 borderRadius: BorderRadius.circular(7),
               ),
-              child: Icon(
-                option.icon,
-                size: 21,
-                color: Colors.white,
-              ),
+              child: Icon(option.icon, size: 21, color: Colors.white),
             ),
             const SizedBox(width: 9),
             Expanded(
@@ -827,14 +829,14 @@ class _RouteArrowPainter extends CustomPainter {
 }
 
 /// Source regions keep each illustration separate in the bundled atlas.
-class _BookingArt extends StatefulWidget {
-  const _BookingArt({required this.index});
+class BookingVehicleArt extends StatefulWidget {
+  const BookingVehicleArt({super.key, required this.index});
   final int index;
   @override
-  State<_BookingArt> createState() => _BookingArtState();
+  State<BookingVehicleArt> createState() => BookingVehicleArtState();
 }
 
-class _BookingArtState extends State<_BookingArt> {
+class BookingVehicleArtState extends State<BookingVehicleArt> {
   ImageStream? _stream;
   ImageInfo? _image;
   late final _listener = ImageStreamListener((image, _) {
@@ -864,12 +866,13 @@ class _BookingArtState extends State<_BookingArt> {
   }
 
   @override
-  Widget build(BuildContext context) =>
-      CustomPaint(painter: _BookingArtPainter(_image?.image, widget.index));
+  Widget build(BuildContext context) => CustomPaint(
+    painter: BookingVehicleArtPainter(_image?.image, widget.index),
+  );
 }
 
-class _BookingArtPainter extends CustomPainter {
-  const _BookingArtPainter(this.image, this.index);
+class BookingVehicleArtPainter extends CustomPainter {
+  const BookingVehicleArtPainter(this.image, this.index);
   final ui.Image? image;
   final int index;
   static const regions = [
@@ -903,6 +906,6 @@ class _BookingArtPainter extends CustomPainter {
   }
 
   @override
-  bool shouldRepaint(_BookingArtPainter oldDelegate) =>
+  bool shouldRepaint(BookingVehicleArtPainter oldDelegate) =>
       image != oldDelegate.image || index != oldDelegate.index;
 }

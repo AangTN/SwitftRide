@@ -34,6 +34,7 @@ public sealed class TripDbContext(DbContextOptions<TripDbContext> options) : DbC
             e.Property(x => x.AgreedAmount).HasPrecision(18, 2);
             e.Property(x => x.Currency).HasMaxLength(3);
             e.Property(x => x.VehicleType).HasMaxLength(20);
+            e.Property(x => x.PaymentMethod).HasMaxLength(20).HasDefaultValue("Wallet");
             e.Property(x => x.PickupAddress).HasMaxLength(500); e.Property(x => x.DestinationAddress).HasMaxLength(500);
             e.Property(x => x.QuoteId).HasMaxLength(36);
             e.Property(x => x.DriverNameSnapshot).HasMaxLength(150); e.Property(x => x.PlateNumberSnapshot).HasMaxLength(20);

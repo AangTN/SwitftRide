@@ -24,6 +24,7 @@ if (builder.Configuration.GetValue("RabbitMq:Enabled", true))
 builder.Services.AddScoped<IPaymentStore, PaymentStore>();
 builder.Services.AddScoped<ILedgerService, LedgerService>();
 builder.Services.AddScoped<IPaymentGateway, WalletPaymentGateway>();
+builder.Services.AddScoped<IPaymentGateway, CashPaymentGateway>();
 builder.Services.AddScoped<IPaymentGateway, MockExternalCardGateway>();
 builder.Services.AddScoped<IPaymentGatewayFactory, PaymentGatewayFactory>();
 builder.Services.AddScoped<IPaymentEventPublisher, PaymentEventPublisher>();

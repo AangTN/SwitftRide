@@ -4,7 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/gestures.dart';
 import 'package:pointer_interceptor/pointer_interceptor.dart';
 
-import 'app.dart' show Brand, green, ink, muted;
+import 'app.dart' show Brand, green, muted;
 import 'goong_map.dart';
 import 'ride_locations.dart';
 import 'places_api.dart';
@@ -13,6 +13,7 @@ import 'trip_api.dart';
 import 'trip_models.dart';
 import 'trip_realtime.dart';
 import 'rider_trip_views.dart';
+import 'trip_widgets.dart';
 import 'package:maplibre_gl/maplibre_gl.dart';
 
 class RiderHome extends StatefulWidget {
@@ -40,6 +41,8 @@ class RiderHome extends StatefulWidget {
 class _RiderHomeState extends State<RiderHome>
     with SingleTickerProviderStateMixin, WidgetsBindingObserver {
   final _map = GlobalKey<GoongMapState>();
+  final _activePanelKey = GlobalKey();
+  double _activePanelHeight = 0;
   int _tab = 0;
   bool _mapBlocked = false;
   TripSnapshot? _currentTrip;
@@ -538,6 +541,7 @@ class _RiderHomeState extends State<RiderHome>
     _panelAnimation.animateTo(1, curve: Curves.easeOutCubic);
     final point = result.destination.point;
     if (point != null) _map.currentState?.focus(point);
+    await _createTrip();
   }
 
   @override
@@ -557,64 +561,29 @@ class _RiderHomeState extends State<RiderHome>
         SingleChildScrollView(child: widget.account),
       ],
     ),
-    bottomNavigationBar: Container(
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: const BorderRadius.vertical(top: Radius.circular(26)),
-        boxShadow: [
-          BoxShadow(
-            color: ink.withValues(alpha: .08),
-            blurRadius: 24,
-            offset: const Offset(0, -4),
-          ),
-        ],
-      ),
-      child: SafeArea(
-        top: false,
-        child: Padding(
-          padding: const EdgeInsets.symmetric(vertical: 10, horizontal: 6),
-          child: Row(
-            children: [
-              _nav(0, Icons.home_rounded, 'Trang chủ'),
-              _nav(1, Icons.history_rounded, 'Chuyến đi'),
-              _nav(2, Icons.person_outline_rounded, 'Tài khoản'),
-            ],
-          ),
-        ),
-      ),
-    ),
-  );
-
-  Widget _nav(int index, IconData icon, String label) => Expanded(
-    child: Semantics(
-      selected: _tab == index,
-      child: InkWell(
-        borderRadius: BorderRadius.circular(16),
-        onTap: () => _selectTab(index),
-        child: Padding(
-          padding: const EdgeInsets.symmetric(vertical: 5),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Icon(icon, size: 27, color: _tab == index ? green : muted),
-              const SizedBox(height: 5),
-              Text(
-                label,
-                style: TextStyle(
-                  fontSize: 10,
-                  fontWeight: _tab == index ? FontWeight.w700 : FontWeight.w600,
-                  color: _tab == index ? green : muted,
-                ),
-              ),
-            ],
-          ),
-        ),
-      ),
-    ),
+    bottomNavigationBar: TripNavigation(index: _tab, onChanged: _selectTab),
   );
 
   Widget _activeTrip() {
     final trip = _currentTrip!;
+    if (tripFinished(trip)) {
+      return TripCompletionPage(
+        trip: trip,
+        onContinue: _dismissTrip,
+        driver: false,
+        api: widget.tripApi,
+      );
+    }
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      final box =
+          _activePanelKey.currentContext?.findRenderObject() as RenderBox?;
+      if (box != null &&
+          box.hasSize &&
+          (box.size.height - _activePanelHeight).abs() > 1) {
+        setState(() => _activePanelHeight = box.size.height);
+      }
+    });
     final mapCenter = LatLng(
       (trip.pickupLatitude + trip.destinationLatitude) / 2,
       (trip.pickupLongitude + trip.destinationLongitude) / 2,
@@ -625,6 +594,9 @@ class _RiderHomeState extends State<RiderHome>
           child: GoongMap(
             key: _map,
             routePoints: _routePoints,
+            bottomInset: _activePanelHeight > 0
+                ? _activePanelHeight
+                : MediaQuery.sizeOf(context).height * .56,
             driverPoint: _driverPoint,
             driverApproaching:
                 trip.status == TripStatus.driverAccepted ||
@@ -656,6 +628,7 @@ class _RiderHomeState extends State<RiderHome>
         Align(
           alignment: Alignment.bottomCenter,
           child: RiderTripPanel(
+            key: _activePanelKey,
             trip: trip,
             route: _tripRoute,
             busy: _tripBusy,
@@ -676,8 +649,7 @@ class _RiderHomeState extends State<RiderHome>
   }
 
   Widget _bookingAction() {
-    if (widget.tripApi == null ||
-        (_destination == null && _pendingBooking == null)) {
+    if (widget.tripApi == null || _pendingBooking == null) {
       return const SizedBox.shrink();
     }
     return Padding(
@@ -716,7 +688,7 @@ class _RiderHomeState extends State<RiderHome>
                     ? 'Đang gửi yêu cầu...'
                     : _pendingBooking != null
                     ? 'Thử lại yêu cầu đặt xe'
-                    : 'Đặt chuyến',
+                    : 'Thử lại yêu cầu đặt xe',
               ),
               style: FilledButton.styleFrom(
                 backgroundColor: green,

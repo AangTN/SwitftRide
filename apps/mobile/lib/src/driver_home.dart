@@ -3,12 +3,13 @@ import 'package:flutter/material.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:maplibre_gl/maplibre_gl.dart';
 import 'package:url_launcher/url_launcher.dart';
-import 'app.dart' show Brand, green, muted;
+import 'app.dart' show Brand, green, ink, muted;
 import 'auth.dart';
 import 'goong_map.dart';
 import 'trip_api.dart';
 import 'trip_models.dart';
 import 'trip_realtime.dart';
+import 'trip_widgets.dart';
 
 class DriverHome extends StatefulWidget {
   const DriverHome({
@@ -38,6 +39,8 @@ class _DriverHomeState extends State<DriverHome> with WidgetsBindingObserver {
   StreamSubscription<Position>? gps;
   TripSnapshot? trip;
   TripRouteSnapshot? route;
+  final _activePanelKey = GlobalKey();
+  double _activePanelHeight = 0;
   LatLng? driverLocation;
   Future<Object?>? earningsFuture;
   Future<TripHistoryPage>? historyFuture;
@@ -476,352 +479,576 @@ class _DriverHomeState extends State<DriverHome> with WidgetsBindingObserver {
           SingleChildScrollView(child: widget.account),
         ],
       ),
-      bottomNavigationBar: NavigationBar(
-        selectedIndex: tab,
-        onDestinationSelected: (v) => setState(() {
+      bottomNavigationBar: TripNavigation(
+        index: tab,
+        driver: true,
+        onChanged: (v) => setState(() {
           tab = v;
           if (v == 1) historyFuture = null;
           if (v == 2) earningsFuture = null;
         }),
-        destinations: const [
-          NavigationDestination(
-            icon: Icon(Icons.home_outlined),
-            label: 'Trang chủ',
-          ),
-          NavigationDestination(icon: Icon(Icons.history), label: 'Chuyến đi'),
-          NavigationDestination(icon: Icon(Icons.bar_chart), label: 'Thu nhập'),
-          NavigationDestination(
-            icon: Icon(Icons.person_outline),
-            label: 'Tài khoản',
-          ),
-        ],
       ),
     );
   }
 
-  Widget _dashboard() => Stack(
-    children: [
-      Positioned.fill(
-        child: GoongMap(
-          routePoints: trip == null
-              ? const []
-              : route?.forTrip(trip!)?.decode() ?? const [],
-          pickupPoint: trip == null
-              ? null
-              : LatLng(trip!.pickupLatitude, trip!.pickupLongitude),
-          destinationPoint: trip == null
-              ? null
-              : LatLng(trip!.destinationLatitude, trip!.destinationLongitude),
-          driverPoint: driverLocation,
-          driverApproaching:
-              trip?.status == TripStatus.driverAccepted ||
-              trip?.status == TripStatus.enRoute,
+  Widget _dashboard() {
+    if (trip != null && tripFinished(trip!)) {
+      return TripCompletionPage(
+        trip: trip!,
+        onContinue: _dismiss,
+        driver: true,
+        api: trips,
+      );
+    }
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      final box =
+          _activePanelKey.currentContext?.findRenderObject() as RenderBox?;
+      if (box != null &&
+          box.hasSize &&
+          (box.size.height - _activePanelHeight).abs() > 1) {
+        setState(() => _activePanelHeight = box.size.height);
+      }
+    });
+    return Stack(
+      children: [
+        Positioned.fill(
+          child: GoongMap(
+            bottomInset: _activePanelHeight > 0
+                ? _activePanelHeight
+                : MediaQuery.sizeOf(context).height * .54,
+            routePoints: trip == null
+                ? const []
+                : route?.forTrip(trip!)?.decode() ?? const [],
+            pickupPoint: trip == null
+                ? null
+                : LatLng(trip!.pickupLatitude, trip!.pickupLongitude),
+            destinationPoint: trip == null
+                ? null
+                : LatLng(trip!.destinationLatitude, trip!.destinationLongitude),
+            driverPoint: driverLocation,
+            driverApproaching:
+                trip?.status == TripStatus.driverAccepted ||
+                trip?.status == TripStatus.enRoute,
+          ),
         ),
-      ),
-      Positioned(
-        top: 0,
-        left: 0,
-        right: 0,
-        child: SafeArea(
-          child: Padding(
-            padding: const EdgeInsets.all(18),
-            child: Row(
-              children: [
-                const Brand(size: 25),
-                const Spacer(),
-                CircleAvatar(
-                  backgroundColor: Colors.white,
-                  child: Icon(Icons.person, color: green),
-                ),
-              ],
+        Positioned(
+          top: 0,
+          left: 0,
+          right: 0,
+          child: SafeArea(
+            child: Padding(
+              padding: const EdgeInsets.all(18),
+              child: Row(children: [const Brand(size: 25)]),
             ),
           ),
         ),
-      ),
-      Align(alignment: Alignment.bottomCenter, child: _panel()),
-    ],
-  );
+        Align(alignment: Alignment.bottomCenter, child: _panel()),
+      ],
+    );
+  }
 
   Widget _panel() {
-    final t = trip, p = t?.currentProposal;
+    final t = trip;
     final status = t?.status;
     final invite = status == TripStatus.awaitingDriverResponse;
-    final accepted = status == TripStatus.driverAccepted;
-    final enRoute = status == TripStatus.enRoute;
+    final approaching =
+        status == TripStatus.driverAccepted || status == TripStatus.enRoute;
     final picked = status == TripStatus.pickedUp;
-    return SafeArea(
-      top: false,
-      child: Container(
-        width: double.infinity,
-        constraints: BoxConstraints(
-          maxHeight: MediaQuery.sizeOf(context).height * .8,
+    if (t == null ||
+        status == TripStatus.cancelled ||
+        status == TripStatus.failed) {
+      return TripSheet(
+        title: online ? 'Đang chờ chuyến' : 'Bạn đang ngoại tuyến',
+        children: [
+          Text(
+            online
+                ? 'Sẵn sàng đón khách. Giữ ứng dụng mở để nhận lời mời.'
+                : 'Bật nhận chuyến khi bạn đã sẵn sàng di chuyển.',
+            style: const TextStyle(color: muted, fontSize: 13),
+          ),
+          const SizedBox(height: 18),
+          if (error != null) ...[
+            Text(
+              error!,
+              style: const TextStyle(color: Colors.red, fontSize: 12),
+            ),
+            const SizedBox(height: 12),
+          ],
+          TripAction(
+            label: online ? 'Tắt nhận chuyến' : 'Bật nhận chuyến',
+            onTap: _toggleOnline,
+            busy: busy,
+            secondary: online,
+          ),
+        ],
+      );
+    }
+    return TripSheet(
+      title: invite
+          ? 'Lời mời chuyến mới'
+          : approaching
+          ? 'Đang đến đón khách'
+          : picked
+          ? 'Đang chở khách'
+          : status!.label,
+      trailing: invite && invitationExpiry != null
+          ? TripCountdown(
+              seconds: invitationExpiry!
+                  .difference(_now())
+                  .inSeconds
+                  .clamp(0, 30),
+              total: 30,
+              size: 54,
+            )
+          : null,
+      children: [
+        TripPersonCard(
+          name: t.riderName ?? 'Khách hàng',
+          subtitle: approaching || picked
+              ? t.riderPhone
+              : 'Khách hàng SwiftRide',
+          onCall: t.riderPhone != null && (approaching || picked)
+              ? () => launchUrl(Uri(scheme: 'tel', path: t.riderPhone))
+              : null,
         ),
-        padding: const EdgeInsets.fromLTRB(20, 18, 20, 18),
-        decoration: const BoxDecoration(
-          color: Colors.white,
-          borderRadius: BorderRadius.vertical(top: Radius.circular(28)),
-        ),
-        child: SingleChildScrollView(
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
+        const SizedBox(height: 12),
+        if (approaching) ...[
+          TripEta(
+            text: route?.pickupEtaMinutes != null
+                ? 'Tới đón khoảng ${route!.pickupEtaMinutes} phút'
+                : 'Đang di chuyển tới điểm đón',
+          ),
+          const SizedBox(height: 12),
+        ],
+        if (picked) ...[
+          TripEta(
+            text: route?.toDestination != null
+                ? 'Tới điểm đến khoảng ${(route!.toDestination!.durationSeconds / 60).ceil()} phút'
+                : 'Đang trên đường tới điểm đến',
+          ),
+          const SizedBox(height: 12),
+        ],
+        if (invite)
+          ExpansionTile(
+            dense: true,
+            visualDensity: VisualDensity.compact,
+            tilePadding: EdgeInsets.zero,
+            leading: const Icon(Icons.route_rounded, color: green, size: 20),
+            title: Text(
+              '${t.pickupAddress.split(',').first} → ${t.destinationAddress.split(',').first}',
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w600),
+            ),
+            children: [TripJourneyCard(trip: t)],
+          )
+        else
+          ExpansionTile(
+            tilePadding: EdgeInsets.zero,
+            title: Text(
+              picked ? t.destinationAddress : t.pickupAddress,
+              style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600),
+              maxLines: 2,
+              overflow: TextOverflow.ellipsis,
+            ),
+            subtitle: Text(
+              picked ? 'Điểm đến' : 'Điểm đón',
+              style: const TextStyle(fontSize: 11, color: muted),
+            ),
+            leading: const Icon(Icons.location_on_rounded, color: green),
+            children: [TripJourneyCard(trip: t)],
+          ),
+        const SizedBox(height: 12),
+        TripMetrics(trip: t),
+        const SizedBox(height: 8),
+        TripPaymentMethodLabel(trip: t),
+        if (error != null) ...[
+          const SizedBox(height: 10),
+          Text(error!, style: const TextStyle(color: Colors.red, fontSize: 12)),
+        ],
+        const SizedBox(height: 16),
+        if (invite)
+          Row(
             children: [
-              Center(
-                child: Container(
-                  width: 40,
-                  height: 4,
-                  decoration: BoxDecoration(
-                    color: const Color(0xFFD2D8DF),
-                    borderRadius: BorderRadius.circular(4),
-                  ),
+              Expanded(
+                child: TripAction(
+                  label: 'Từ chối',
+                  onTap: () => _answer(false),
+                  busy: busy,
+                  secondary: true,
                 ),
               ),
-              const SizedBox(height: 16),
-              if (error != null)
-                Text(error!, style: const TextStyle(color: Colors.red)),
-              if (t == null ||
-                  status == TripStatus.cancelled ||
-                  status == TripStatus.failed) ...[
-                Text(
-                  online ? 'Đang chờ chuyến' : 'Bạn đang ngoại tuyến',
-                  style: const TextStyle(
-                    fontSize: 21,
-                    fontWeight: FontWeight.bold,
-                  ),
+              const SizedBox(width: 10),
+              Expanded(
+                child: TripAction(
+                  label: 'Nhận chuyến',
+                  onTap: () => _answer(true),
+                  busy: busy,
                 ),
-                const SizedBox(height: 14),
-                SizedBox(
-                  width: double.infinity,
-                  child: FilledButton(
-                    onPressed: busy ? null : _toggleOnline,
-                    child: Text(online ? 'Tắt nhận chuyến' : 'Bật nhận chuyến'),
-                  ),
-                ),
-              ] else ...[
-                Text(
-                  switch (status) {
-                    TripStatus.awaitingDriverResponse => 'Lời mời chuyến mới',
-                    TripStatus.driverAccepted => 'Đã nhận chuyến',
-                    TripStatus.enRoute => 'Đang đến đón khách',
-                    TripStatus.pickedUp => 'Đang chở khách',
-                    TripStatus.droppedOff ||
-                    TripStatus.paymentPending => 'Đã trả khách',
-                    _ => 'Đang xử lý chuyến',
-                  },
-                  style: const TextStyle(
-                    fontSize: 21,
-                    fontWeight: FontWeight.bold,
-                  ),
-                ),
-                const SizedBox(height: 10),
-                if (invite && invitationExpiry != null)
-                  Text(
-                    'Thời gian phản hồi: ${invitationExpiry!.difference(_now()).inSeconds.clamp(0, 30)} giây',
-                    style: const TextStyle(
-                      color: green,
-                      fontWeight: FontWeight.bold,
-                    ),
-                  ),
-                if (t.riderName != null)
-                  Text(
-                    'Khách hàng: ${t.riderName}',
-                    style: const TextStyle(fontWeight: FontWeight.w600),
-                  ),
-                if (t.riderPhone != null && (accepted || enRoute || picked))
-                  Row(
-                    children: [
-                      Expanded(child: Text('SĐT: ${t.riderPhone}')),
-                      IconButton(
-                        onPressed: () =>
-                            launchUrl(Uri(scheme: 'tel', path: t.riderPhone)),
-                        icon: const Icon(Icons.call, color: green),
-                        tooltip: 'Gọi khách',
-                      ),
-                    ],
-                  ),
-                const SizedBox(height: 8),
-                _address(Icons.trip_origin, 'Điểm đón', t.pickupAddress),
-                _address(Icons.location_on, 'Điểm đến', t.destinationAddress),
-                const SizedBox(height: 8),
-                Text(
-                  'Giá chuyến: ${(p?.amount ?? t.agreedAmount ?? 0).toStringAsFixed(0)} đ  •  ${p?.distanceMeters == null ? 'Đang tính tuyến' : '${(p!.distanceMeters! / 1000).toStringAsFixed(1)} km'}',
-                ),
-                if (route?.pickupEtaMinutes != null &&
-                    (invite || accepted || enRoute))
-                  Text(
-                    'Tới đón khoảng ${route!.pickupEtaMinutes} phút',
-                    style: const TextStyle(
-                      color: green,
-                      fontWeight: FontWeight.w600,
-                    ),
-                  ),
-                if (picked && route?.toDestination?.durationSeconds != null)
-                  Text(
-                    'Tới điểm đến khoảng ${(route!.toDestination!.durationSeconds / 60).ceil()} phút',
-                    style: const TextStyle(
-                      color: green,
-                      fontWeight: FontWeight.w600,
-                    ),
-                  ),
-                const SizedBox(height: 14),
-                if (invite)
-                  Row(
-                    children: [
-                      Expanded(
-                        child: OutlinedButton(
-                          onPressed: busy ? null : () => _answer(false),
-                          child: const Text('Từ chối'),
-                        ),
-                      ),
-                      const SizedBox(width: 10),
-                      Expanded(
-                        child: FilledButton(
-                          onPressed: busy ? null : () => _answer(true),
-                          child: const Text('Nhận chuyến'),
-                        ),
-                      ),
-                    ],
-                  ),
-                if (accepted)
-                  SizedBox(
-                    width: double.infinity,
-                    child: FilledButton(
-                      onPressed: busy ? null : () => _step('en-route'),
-                      child: const Text('Bắt đầu đến đón'),
-                    ),
-                  ),
-                if (enRoute)
-                  SizedBox(
-                    width: double.infinity,
-                    child: FilledButton(
-                      onPressed: busy ? null : () => _step('pickup'),
-                      child: const Text('Đã đón khách'),
-                    ),
-                  ),
-                if (picked)
-                  SizedBox(
-                    width: double.infinity,
-                    child: FilledButton(
-                      onPressed: busy ? null : () => _step('dropoff'),
-                      child: const Text('Đã trả khách'),
-                    ),
-                  ),
-                if (status == TripStatus.paymentPending)
-                  Text(
-                    t.paymentStatus == 'Failed'
-                        ? 'Thanh toán chưa thành công'
-                        : 'Đang xử lý thanh toán theo hệ thống…',
-                    style: const TextStyle(color: green),
-                  ),
-                if ({
-                  TripStatus.paymentPending,
-                  TripStatus.paid,
-                }.contains(status))
-                  FilledButton(
-                    onPressed: _dismiss,
-                    child: const Text('Tiếp tục nhận chuyến'),
-                  ),
-                if (status == TripStatus.paid)
-                  const Text(
-                    'Thanh toán thành công',
-                    style: TextStyle(color: green),
-                  ),
-              ],
+              ),
             ],
           ),
-        ),
-      ),
+        if (approaching)
+          TripAction(
+            label: 'Đã đón khách',
+            onTap: () => _step('pickup'),
+            busy: busy,
+          ),
+        if (picked)
+          TripAction(
+            label: t.isCash ? 'Đã trả khách và thu tiền' : 'Đã trả khách',
+            onTap: () => _step('dropoff'),
+            busy: busy,
+          ),
+      ],
     );
   }
 
-  Widget _address(IconData icon, String label, String value) => Padding(
-    padding: const EdgeInsets.symmetric(vertical: 5),
-    child: Row(
-      children: [
-        Icon(icon, color: green, size: 19),
-        const SizedBox(width: 8),
-        Expanded(
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(label, style: const TextStyle(color: muted, fontSize: 11)),
-              Text(
-                value,
-                maxLines: 2,
-                overflow: TextOverflow.ellipsis,
-                style: const TextStyle(fontWeight: FontWeight.w600),
-              ),
-            ],
-          ),
-        ),
-      ],
-    ),
-  );
   Widget _history() => FutureBuilder<TripHistoryPage>(
     future: historyFuture ??= trips.history(),
-    builder: (context, snap) =>
-        _listPage('Chuyến đi', snap.data?.items ?? const []),
-  );
-  Widget _listPage(String title, List<TripSnapshot> items) => Scaffold(
-    appBar: AppBar(title: Text(title)),
-    body: ListView(
-      children: [
-        for (final t in items)
-          ListTile(
-            title: Text(t.destinationAddress),
-            subtitle: Text('${t.pickupAddress}\n${t.status.label}'),
-            trailing: Text('${(t.agreedAmount ?? 0).toStringAsFixed(0)} đ'),
-            onTap: () => showDialog<void>(
-              context: context,
-              builder: (context) => AlertDialog(
-                title: const Text('Chi tiết chuyến đi'),
-                content: Text(
-                  'Khách: ${t.riderName ?? 'Khách hàng'}\nĐón: ${t.pickupAddress}\nĐến: ${t.destinationAddress}\nTrạng thái: ${t.status.label}\nGiá: ${(t.agreedAmount ?? 0).toStringAsFixed(0)} đ',
-                ),
-                actions: [
-                  TextButton(
-                    onPressed: () => Navigator.pop(context),
-                    child: const Text('Đóng'),
-                  ),
-                ],
+    builder: (c, s) => Scaffold(
+      backgroundColor: const Color(0xFFF6FAF7),
+      appBar: AppBar(
+        title: const Text(
+          'Chuyến đi',
+          style: TextStyle(fontWeight: FontWeight.w800),
+        ),
+        backgroundColor: Colors.white,
+      ),
+      body: s.connectionState != ConnectionState.done
+          ? const Center(child: CircularProgressIndicator())
+          : s.hasError
+          ? _retry(
+              'Chưa tải được lịch sử',
+              () => setState(() => historyFuture = null),
+            )
+          : s.data!.items.isEmpty
+          ? const Center(
+              child: Text(
+                'Chưa có chuyến đi nào.',
+                style: TextStyle(color: muted),
               ),
+            )
+          : ListView.separated(
+              padding: const EdgeInsets.all(16),
+              itemCount: s.data!.items.length,
+              separatorBuilder: (_, i) => const SizedBox(height: 12),
+              itemBuilder: (c, i) {
+                final t = s.data!.items[i];
+                return InkWell(
+                  onTap: () => showModalBottomSheet<void>(
+                    context: c,
+                    isScrollControlled: true,
+                    showDragHandle: true,
+                    builder: (c) => SingleChildScrollView(
+                      padding: const EdgeInsets.all(20),
+                      child: Column(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Text(
+                            tripFinished(t)
+                                ? 'Chuyến đi hoàn tất'
+                                : t.status.label,
+                            style: const TextStyle(
+                              color: ink,
+                              fontSize: 23,
+                              fontWeight: FontWeight.w800,
+                            ),
+                          ),
+                          const SizedBox(height: 16),
+                          TripPersonCard(name: t.riderName ?? 'Khách hàng'),
+                          const SizedBox(height: 12),
+                          TripJourneyCard(trip: t),
+                          const SizedBox(height: 12),
+                          TripMetrics(trip: t),
+                          const SizedBox(height: 8),
+                          TripPaymentMethodLabel(trip: t),
+                          if (tripFinished(t)) ...[
+                            const SizedBox(height: 12),
+                            TripPaymentBadge(
+                              status: t.status == TripStatus.paid
+                                  ? 'Succeeded'
+                                  : t.paymentStatus,
+                            ),
+                          ],
+                        ],
+                      ),
+                    ),
+                  ),
+                  child: TripCard(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          '${t.createdAt.day}/${t.createdAt.month}/${t.createdAt.year} · ${t.createdAt.hour.toString().padLeft(2, '0')}:${t.createdAt.minute.toString().padLeft(2, '0')} · ${t.paymentMethodLabel}',
+                          style: const TextStyle(color: muted, fontSize: 11),
+                        ),
+                        const SizedBox(height: 10),
+                        Text(
+                          t.pickupAddress,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(
+                            fontSize: 13,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                        const Padding(
+                          padding: EdgeInsets.only(left: 3),
+                          child: Icon(
+                            Icons.south_rounded,
+                            size: 17,
+                            color: green,
+                          ),
+                        ),
+                        Text(
+                          t.destinationAddress,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(
+                            fontSize: 13,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                        const SizedBox(height: 12),
+                        Row(
+                          children: [
+                            Expanded(
+                              child: Text(
+                                moneyVnd(
+                                  t.agreedAmount ?? t.currentProposal?.amount,
+                                ),
+                                style: const TextStyle(
+                                  color: ink,
+                                  fontSize: 19,
+                                  fontWeight: FontWeight.w800,
+                                ),
+                              ),
+                            ),
+                            if (tripFinished(t))
+                              Flexible(
+                                child: TripPaymentBadge(
+                                  status: t.status == TripStatus.paid
+                                      ? 'Succeeded'
+                                      : t.paymentStatus,
+                                ),
+                              )
+                            else
+                              Text(
+                                t.status.label,
+                                style: const TextStyle(
+                                  fontSize: 11,
+                                  color: muted,
+                                ),
+                              ),
+                          ],
+                        ),
+                      ],
+                    ),
+                  ),
+                );
+              },
             ),
-          ),
+    ),
+  );
+  Widget _retry(String message, VoidCallback action) => Center(
+    child: Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Text(message, style: const TextStyle(color: muted)),
+        TextButton(onPressed: action, child: const Text('Thử lại')),
       ],
     ),
   );
   Widget _income() => FutureBuilder<Object?>(
     future: earningsFuture ??= trips.earnings(),
-    builder: (context, snap) {
-      final data = snap.data is Map<String, dynamic>
-          ? snap.data as Map<String, dynamic>
-          : const <String, dynamic>{};
-      final amount = (data['totalEarnings'] as num?)?.toDouble() ?? 0;
+    builder: (c, s) {
+      final data = s.data is Map ? s.data as Map : const {};
       final items = data['transactions'] as List? ?? const [];
       return Scaffold(
-        appBar: AppBar(title: const Text('Thu nhập')),
-        body: ListView(
-          padding: const EdgeInsets.all(20),
-          children: [
-            const Text('Tổng thu nhập'),
-            Text(
-              '${amount.toStringAsFixed(0)} đ',
-              style: const TextStyle(
-                fontSize: 28,
-                fontWeight: FontWeight.bold,
-                color: green,
-              ),
-            ),
-            const SizedBox(height: 16),
-            for (final item in items.whereType<Map>())
-              ListTile(
-                leading: const Icon(Icons.payments, color: green),
-                title: Text('${item['amount'] ?? 0} đ'),
-                subtitle: Text('${item['paidAt'] ?? ''}'),
-              ),
-          ],
+        backgroundColor: const Color(0xFFF6FAF7),
+        appBar: AppBar(
+          title: const Text(
+            'Thu nhập',
+            style: TextStyle(fontWeight: FontWeight.w800),
+          ),
+          backgroundColor: Colors.white,
         ),
+        body: s.hasError
+            ? _retry(
+                'Chưa tải được thu nhập',
+                () => setState(() => earningsFuture = null),
+              )
+            : s.connectionState != ConnectionState.done
+            ? const Center(child: CircularProgressIndicator())
+            : ListView(
+                padding: const EdgeInsets.all(18),
+                children: [
+                  TripCard(
+                    color: tripMint,
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        const Text(
+                          'Tổng thu nhập',
+                          style: TextStyle(
+                            color: muted,
+                            fontSize: 13,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                        const SizedBox(height: 8),
+                        Text(
+                          moneyVnd(data['totalEarnings'] as num? ?? 0),
+                          style: const TextStyle(
+                            color: ink,
+                            fontSize: 34,
+                            fontWeight: FontWeight.w800,
+                          ),
+                        ),
+                        const SizedBox(height: 8),
+                        Text(
+                          '${data['tripCount'] ?? items.length} chuyến đã thanh toán · Đã trừ phí nền tảng',
+                          style: const TextStyle(color: muted, fontSize: 11),
+                        ),
+                      ],
+                    ),
+                  ),
+                  const SizedBox(height: 12),
+                  TripCard(
+                    child: Column(
+                      children: [
+                        _earningLine(
+                          'Tiền mặt đã thu',
+                          data['cashCollected'] as num? ?? 0,
+                        ),
+                        _earningLine(
+                          'Thu nhập tiền mặt (sau phí)',
+                          data['cashNetEarnings'] as num? ?? 0,
+                        ),
+                        _earningLine(
+                          'Thu nhập qua ví/online',
+                          data['nonCashEarnings'] as num? ??
+                              data['totalEarnings'] as num? ??
+                              0,
+                        ),
+                        const Divider(height: 20),
+                        _earningLine(
+                          'Phí tiền mặt cần nộp',
+                          data['cashCommissionDue'] as num? ?? 0,
+                        ),
+                        const SizedBox(height: 8),
+                        const Text(
+                          'Tiền mặt là khoản bạn đã trực tiếp thu từ khách. Tổng thu nhập đã trừ phí nền tảng.',
+                          style: TextStyle(color: muted, fontSize: 11),
+                        ),
+                      ],
+                    ),
+                  ),
+                  const SizedBox(height: 22),
+                  const Text(
+                    'Giao dịch gần đây',
+                    style: TextStyle(
+                      color: ink,
+                      fontWeight: FontWeight.w800,
+                      fontSize: 17,
+                    ),
+                  ),
+                  const SizedBox(height: 12),
+                  if (items.isEmpty)
+                    const Padding(
+                      padding: EdgeInsets.symmetric(vertical: 30),
+                      child: Text(
+                        'Chưa có thu nhập từ chuyến đi.',
+                        textAlign: TextAlign.center,
+                        style: TextStyle(color: muted),
+                      ),
+                    ),
+                  for (final item in items.whereType<Map>())
+                    Padding(
+                      padding: const EdgeInsets.only(bottom: 10),
+                      child: TripCard(
+                        padding: 13,
+                        child: Row(
+                          children: [
+                            Container(
+                              padding: const EdgeInsets.all(9),
+                              decoration: BoxDecoration(
+                                color: tripMint,
+                                borderRadius: BorderRadius.circular(12),
+                              ),
+                              child: const Icon(
+                                Icons.two_wheeler_rounded,
+                                color: green,
+                              ),
+                            ),
+                            const SizedBox(width: 12),
+                            Expanded(
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Text(
+                                    item['paymentMethod'] == 'Cash'
+                                        ? 'Thu nhập · Tiền mặt'
+                                        : 'Thu nhập · Ví/online',
+                                    style: TextStyle(
+                                      color: ink,
+                                      fontWeight: FontWeight.w700,
+                                      fontSize: 13,
+                                    ),
+                                  ),
+                                  const SizedBox(height: 4),
+                                  Text(
+                                    _date(item['paidAt']),
+                                    style: const TextStyle(
+                                      color: muted,
+                                      fontSize: 11,
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
+                            Text(
+                              '${item['paymentMethod'] == 'Cash' ? '' : '+'}${moneyVnd(item['amount'] as num? ?? 0)}',
+                              style: const TextStyle(
+                                color: green,
+                                fontWeight: FontWeight.w800,
+                                fontSize: 15,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+                ],
+              ),
       );
     },
   );
+  Widget _earningLine(String label, num amount) => Padding(
+    padding: const EdgeInsets.symmetric(vertical: 5),
+    child: Row(
+      children: [
+        Expanded(
+          child: Text(
+            label,
+            style: const TextStyle(color: muted, fontSize: 12),
+          ),
+        ),
+        Text(
+          moneyVnd(amount),
+          style: const TextStyle(
+            color: ink,
+            fontWeight: FontWeight.w700,
+            fontSize: 13,
+          ),
+        ),
+      ],
+    ),
+  );
+  String _date(Object? value) {
+    final date = DateTime.tryParse('$value')?.toLocal();
+    return date == null ? '' : '${date.day}/${date.month}/${date.year}';
+  }
 }

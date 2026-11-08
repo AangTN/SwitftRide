@@ -68,7 +68,7 @@ void main() {
         await tester.tap(find.text('7 chỗ'));
         await tester.ensureVisible(find.text('Ví SwiftRide'));
         await tester.tap(find.text('Ví SwiftRide'));
-        await tester.tap(find.text('Áp dụng'));
+        await tester.tap(find.text('Đặt xe'));
         await tester.pumpAndSettle();
         expect(find.byType(RideLocationPicker), findsNothing);
         expect(lookup.detailCalls, 2);
@@ -117,7 +117,7 @@ void main() {
         find.byKey(const Key('pickup-field')),
         'Địa chỉ tự nhập',
       );
-      await tester.tap(find.text('Áp dụng'));
+      await tester.tap(find.text('Đặt xe'));
       await tester.pumpAndSettle();
       expect(
         find.text('Vui lòng chọn điểm đón từ kết quả tìm kiếm.'),
@@ -131,7 +131,7 @@ void main() {
         'Địa chỉ khác',
       );
       await tester.pumpAndSettle();
-      await tester.tap(find.text('Áp dụng'));
+      await tester.tap(find.text('Đặt xe'));
       await tester.pumpAndSettle();
       expect(find.byType(RideLocationPicker), findsOneWidget);
       expect(

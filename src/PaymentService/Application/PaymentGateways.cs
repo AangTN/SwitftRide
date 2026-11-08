@@ -39,6 +39,16 @@ public sealed class WalletPaymentGateway(IPaymentStore store) : IPaymentGateway
     }
 }
 
+/// Trip's trusted dropoff action confirms that the driver collected cash.
+public sealed class CashPaymentGateway : IPaymentGateway
+{
+    public string Method => "Cash";
+    public Task<PaymentGatewayChargeResult> ChargeAsync(PaymentChargeRequest request, CancellationToken ct = default) =>
+        Task.FromResult(new PaymentGatewayChargeResult(true, $"CASH-{request.TripId:N}"));
+    public Task<PaymentGatewayChargeResult> RefundAsync(PaymentRefundRequest request, CancellationToken ct = default) =>
+        Task.FromResult(new PaymentGatewayChargeResult(false, null, "manual_cash_refund_required", "Cash refunds require a confirmed manual return; no wallet credit is issued.", false));
+}
+
 public sealed class MockExternalCardGateway : IPaymentGateway
 {
     public string Method => "MockCard";

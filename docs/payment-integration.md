@@ -31,6 +31,28 @@ Tài khoản broker phải được giữ kín; triển khai thật cần cấp 
 
 ## Kết quả và gửi lại
 
+### Tiền mặt và ví
+
+Khách chọn `Cash` hoặc `Wallet` khi tạo chuyến; Trip lưu phương thức trong `trips.payment_method`
+và trả qua snapshot. Phương thức này không đổi khi nhận/từ chối đề xuất. Migration `TripPaymentMethod`
+thêm cột trong TripDB, gán `Wallet` cho chuyến cũ. Tin `PaymentRequested` cũ thiếu phương thức cũng mặc định `Wallet`.
+
+Với tiền mặt, tài xế bấm **Đã trả khách và thu tiền** sau khi đã nhận tiền từ khách. Trip ghi trả khách,
+giải phóng tài xế và lưu `PaymentRequested` có `PaymentMethod=Cash` vào Outbox như luồng ví.
+Payment tạo giao dịch `Cash/Succeeded` và Outbox kết quả trong cùng transaction. App không tự đánh dấu
+thanh toán thành công trước khi nhận kết quả backend. Trùng tin không tạo thêm giao dịch hoặc phí.
+
+Tiền mặt không kiểm tra/trừ ví khách và không ghi có khoản tiền phải trả tài xế. Với giá 100.000 đ,
+phí hiện tại 15% là 15.000 đ: sổ cái ghi Nợ `DRIVER_CASH_RECEIVABLE` của tài xế 15.000 đ,
+Có `PLATFORM_REVENUE` 15.000 đ. Tài xế giữ 100.000 đ tiền mặt, thu nhập sau phí là 85.000 đ
+và còn phải nộp 15.000 đ phí. API thu nhập tách `cashCollected`, `cashNetEarnings`,
+`nonCashEarnings`, `cashCommissionDue`; tổng thu nhập là số sau phí, không cộng tiền mặt lần nữa.
+Khoản phí phải nộp đọc từ số dư sổ cái. Chưa có luồng nộp/bù trừ khoản phí này.
+
+Ví vẫn kiểm tra số dư và ghi trừ tiền như trước. Hoàn tiền tự động cho `Cash` trả lỗi
+`manual_cash_refund_required`: chưa có nghiệp vụ xác nhận trả tiền mặt thủ công, không tự cộng vào ví
+khách hoặc đảo phí khi chưa biết tiền mặt đã được trả.
+
 Payment xác nhận `Succeeded` thì Trip thành `Paid`. Payment xác nhận `Failed` thì Trip vẫn
 `PaymentPending`, `PaymentStatus=Failed`; khách đã đi xong và còn cần xử lý thanh toán.
 Kết quả trùng không làm đổi trạng thái lần nữa; kết quả cũ không kéo chuyến `Paid` về thất bại.
