@@ -1,0 +1,56 @@
+name: Build Android APKs
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+
+      - name: Build Rider and Driver APKs
+        working-directory: apps/mobile
+        env:
+          GOONG_MAPTILES_KEY: ${{ secrets.GOONG_MAPTILES_KEY }}
+        run: |
+          set -euo pipefail
+          if [[ -z "$GOONG_MAPTILES_KEY" ]]; then
+            echo 'Missing repository Actions secret GOONG_MAPTILES_KEY.' >&2
+            exit 1
+          fi
+
+          map_config="$RUNNER_TEMP/swiftride-map.json"
+          trap 'rm -f "$map_config"' EXIT
+          python3 -c 'import json, os; from pathlib import Path; Path(os.environ["RUNNER_TEMP"], "swiftride-map.json").write_text(json.dumps({"GOONG_MAPTILES_KEY": os.environ["GOONG_MAPTILES_KEY"]}))'
+          chmod 600 "$map_config"
+
+          flutter pub get
+          flutter build apk --release --flavor rider --target lib/main_rider.dart \
+            --dart-define=API_BASE_URL=https://13.214.93.224 \
+            --dart-define-from-file="$map_config"
+          flutter build apk --release --flavor driver --target lib/main_driver.dart \
+            --dart-define=API_BASE_URL=https://13.214.93.224 \
+            --dart-define-from-file="$map_config"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: SwiftRide-Android-APKs-${{ github.sha }}
+          path: |
+            apps/mobile/build/app/outputs/flutter-apk/app-rider-release.apk
+            apps/mobile/build/app/outputs/flutter-apk/app-driver-release.apk
+          if-no-files-found: error
+          retention-days: 14
