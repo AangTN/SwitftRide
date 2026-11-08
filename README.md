@@ -11,7 +11,7 @@ Backend .NET 10 gồm Auth, Trip, Matching & Pricing, Payment và API Gateway YA
 - Matching & Pricing: hồ sơ xe/tài xế, GPS và trạng thái nhận chuyến, tìm và giữ tài xế, báo giá và định tuyến Goong V2. MongoDB lưu vị trí và công việc tích hợp; Redis giữ tuyến và thời gian tới đón tạm thời.
 - Payment: ví SwiftRide demo, ghi sổ, chống trừ tiền lặp, hoàn tiền nội bộ và API thu nhập tài xế. Chưa tích hợp thẻ, ngân hàng hoặc cổng SMS thật.
 - Backend giao tiếp qua RabbitMQ/MassTransit; Trip và Payment dùng Outbox. Có health checks, Problem Details, Swagger ở Development và Docker Compose.
-- Hai app Flutter dùng chung luồng OTP và hồ sơ. App khách đã nối tìm địa chỉ, đặt chuyến, duyệt đề xuất, theo dõi tuyến/trạng thái, thanh toán demo và lịch sử với backend; app tài xế hiện có luồng OTP và hồ sơ, các màn nhận chuyến/GPS/thu nhập đang chờ tích hợp. Xem [hướng dẫn app](apps/mobile/DEVELOPMENT.md).
+- Hai app Flutter dùng chung luồng OTP và hồ sơ. App khách đã nối tìm địa chỉ, đặt chuyến, duyệt đề xuất, theo dõi tuyến/trạng thái, thanh toán demo và lịch sử với backend; app tài xế đã nối nhận lời mời SignalR, GPS, các bước đón/trả khách, lịch sử và thu nhập. Xem [hướng dẫn app](apps/mobile/DEVELOPMENT.md).
 
 ## Chạy hai app trên PC
 

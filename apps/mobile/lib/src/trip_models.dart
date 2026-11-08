@@ -159,6 +159,8 @@ class TripSnapshot {
     required this.updatedAt,
     required this.proposals,
     this.driverId,
+    this.riderName,
+    this.riderPhone,
     this.agreedAmount,
     this.currency = 'VND',
     this.paymentId,
@@ -193,6 +195,8 @@ class TripSnapshot {
           })
           .toList(growable: false),
       driverId: _optionalString(json, 'driverId'),
+      riderName: _optionalString(json, 'riderNameSnapshot'),
+      riderPhone: _optionalString(json, 'riderPhoneSnapshot'),
       agreedAmount: _optionalNumber(json, 'agreedAmount'),
       currency: _optionalString(json, 'currency') ?? 'VND',
       paymentId: _optionalString(json, 'paymentId'),
@@ -215,6 +219,8 @@ class TripSnapshot {
   final DateTime updatedAt;
   final List<TripProposalSnapshot> proposals;
   final String? driverId;
+  final String? riderName;
+  final String? riderPhone;
   final double? agreedAmount;
   final String currency;
   final String? paymentId;

@@ -20,6 +20,9 @@ public sealed class MatchingDatabase : IDriverProfileReader, IMatchingStore
         await Profiles.Find(x => x.Id == userId).SingleOrDefaultAsync(ct);
     public MatchingDatabase(IMongoClient client, string name) => Database = client.GetDatabase(name);
 
+    public async Task<DriverAvailability?> GetDriverAsync(string driverId, CancellationToken ct) =>
+        await Drivers.Find(x => x.Id == driverId).FirstOrDefaultAsync(ct);
+
     public Task<DriverAvailability?> UpdateGpsAsync(string driverId, DriverGpsRequest gps, DateTime now, CancellationToken ct) =>
         Drivers.FindOneAndUpdateAsync<DriverAvailability>(x => x.Id == driverId,
             Builders<DriverAvailability>.Update

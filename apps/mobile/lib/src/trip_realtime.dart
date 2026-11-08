@@ -17,7 +17,8 @@ abstract interface class TripRealtimeClient {
 }
 
 class SignalRTripRealtime implements TripRealtimeClient {
-  SignalRTripRealtime(AuthApi auth) {
+  SignalRTripRealtime(AuthApi auth, {bool keepAlive = false})
+    : _keepAlive = keepAlive {
     _hub = HubConnectionBuilder()
         .withUrl(
           '${auth.baseUrl}/api/trips/realtime',
@@ -59,6 +60,7 @@ class SignalRTripRealtime implements TripRealtimeClient {
     });
   }
 
+  final bool _keepAlive;
   late final HubConnection _hub;
   final _events = StreamController<TripRealtimeEvent>.broadcast();
   String? _tripId;
@@ -85,7 +87,7 @@ class SignalRTripRealtime implements TripRealtimeClient {
         await _hub.invoke('UnsubscribeTrip', args: [previous]);
       } catch (_) {}
     }
-    if (tripId == null) {
+    if (tripId == null && !_keepAlive) {
       _retry?.cancel();
       return;
     }
@@ -104,7 +106,11 @@ class SignalRTripRealtime implements TripRealtimeClient {
 
   Future<void> _join() async {
     final tripId = _tripId;
-    if (_disposed || tripId == null) return;
+    if (_disposed) return;
+    if (tripId == null) {
+      if (_keepAlive) _notify('connected');
+      return;
+    }
     await _hub.invoke('SubscribeTrip', args: [tripId]);
     if (!_disposed && _tripId == tripId) _notify('connected');
   }
@@ -119,7 +125,11 @@ class SignalRTripRealtime implements TripRealtimeClient {
   }
 
   void _scheduleRetry() {
-    if (_disposed || _tripId == null || _retry?.isActive == true) return;
+    if (_disposed ||
+        (_tripId == null && !_keepAlive) ||
+        _retry?.isActive == true) {
+      return;
+    }
     _retry = Timer(const Duration(seconds: 5), () => unawaited(watch(_tripId)));
   }
 

@@ -64,7 +64,7 @@ void main() {
         store: MemoryStore(),
         baseUrl: 'http://127.0.0.1:${server.port}',
       )..session = AuthSession.fromJson(tokens());
-      final realtime = SignalRTripRealtime(auth);
+      final realtime = SignalRTripRealtime(auth, keepAlive: true);
       addTearDown(() async {
         await realtime.dispose();
         auth.dispose();
@@ -75,6 +75,12 @@ void main() {
         await server.close(force: true);
       });
 
+      final accountConnected = realtime.events.firstWhere(
+        (event) => event.name == 'connected',
+      );
+      await realtime.watch(null);
+      await accountConnected.timeout(const Duration(seconds: 10));
+      expect(negotiations, 1);
       final firstJoin = joined.stream.first;
       await realtime.watch('trip-1');
       expect(await firstJoin, 'trip-1');

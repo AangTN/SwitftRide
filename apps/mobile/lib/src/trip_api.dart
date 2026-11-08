@@ -112,6 +112,55 @@ class TripApi {
     ),
   );
 
+  Future<Map<String, dynamic>> driverAvailability() async =>
+      Map<String, dynamic>.from(
+        await auth.requestAuthenticatedJson('matching/drivers/me/availability')
+            as Map,
+      );
+
+  Future<void> availability(
+    bool online, {
+    double? latitude,
+    double? longitude,
+  }) async {
+    await auth.requestAuthenticatedJson(
+      'matching/drivers/me/availability',
+      method: 'PUT',
+      body: {'online': online, 'latitude': ?latitude, 'longitude': ?longitude},
+    );
+  }
+
+  Future<void> updateGps(double latitude, double longitude) async {
+    await auth.requestAuthenticatedJson(
+      'matching/drivers/me/location',
+      method: 'PUT',
+      body: {'latitude': latitude, 'longitude': longitude},
+    );
+  }
+
+  Future<TripSnapshot> driverAnswer(
+    String id,
+    String proposalId,
+    int version, {
+    required bool accept,
+  }) async => _snapshot(
+    await auth.requestAuthenticatedJson(
+      'trips/$id/${accept ? "driver-accept" : "driver-reject"}',
+      method: 'POST',
+      body: {'proposalId': proposalId, 'stateVersion': version},
+    ),
+  );
+  Future<TripSnapshot> driverStep(String id, int version, String step) async =>
+      _snapshot(
+        await auth.requestAuthenticatedJson(
+          'trips/$id/$step',
+          method: 'POST',
+          body: {'stateVersion': version},
+        ),
+      );
+  Future<Object?> earnings() =>
+      auth.requestAuthenticatedJson('payments/drivers/me/earnings');
+
   static TripSnapshot _snapshot(Object? value) {
     if (value is! Map<String, dynamic>) {
       throw const AuthFailure('Thông tin chuyến đi không hợp lệ.');
