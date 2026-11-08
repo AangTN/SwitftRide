@@ -19,18 +19,29 @@ public sealed class MatchingOperationsTests
             TaxRate = 0.1m
         });
 
-        Assert.Equal(10593m, amount);
+        Assert.Equal(11000m, amount);
     }
 
     [Fact]
-    public void Half_VND_amount_rounds_up()
+    public void Fare_is_rounded_up_to_the_next_thousand()
     {
         var amount = CreateFareCalculator().Calculate(new RouteMetrics(1, 0), new PricingOptions
         {
-            PerKilometer = 500
+            PerKilometer = 32_983_000
         });
 
-        Assert.Equal(1m, amount);
+        Assert.Equal(33_000m, amount);
+    }
+
+    [Fact]
+    public void Fare_that_is_already_a_thousand_is_unchanged()
+    {
+        var amount = CreateFareCalculator().Calculate(new RouteMetrics(1, 0), new PricingOptions
+        {
+            PerKilometer = 33_000_000
+        });
+
+        Assert.Equal(33_000m, amount);
     }
 
     [Fact]
@@ -101,7 +112,7 @@ public sealed class MatchingOperationsTests
         var quote = coordinator.CalculateFareQuote(new FareQuoteRequest(
             Guid.NewGuid(), Guid.NewGuid(), 10, 106, 10.1, 106.1), new RouteMetrics(2000, 60));
 
-        Assert.Equal(10500m, quote.TotalAmount);
+        Assert.Equal(11000m, quote.TotalAmount);
         Assert.Equal(2000, quote.DistanceMeters);
         Assert.Equal("Motorbike", quote.VehicleType);
         Assert.Equal(5000m, quote.PricingSnapshot.PerKilometer);

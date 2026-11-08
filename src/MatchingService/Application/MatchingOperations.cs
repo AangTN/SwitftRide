@@ -319,7 +319,8 @@ public sealed class FareCalculator(
         var standardFare = standard.Calculate(route, pricing);
         var surgedFare = surge.Apply(standardFare, pricing);
         var promotedFare = promotion.Apply(surgedFare, pricing);
-        return decimal.Round(promotedFare, 0, MidpointRounding.AwayFromZero);
+        const decimal fareIncrement = 1000m;
+        return decimal.Ceiling(promotedFare / fareIncrement) * fareIncrement;
     }
 }
 
