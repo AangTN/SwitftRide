@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:swiftride_mobile/src/auth.dart';
 import 'package:swiftride_mobile/src/goong_map.dart';
+import 'package:swiftride_mobile/src/ride_locations.dart';
 import 'package:swiftride_mobile/src/rider_home.dart';
 import 'package:swiftride_mobile/src/trip_api.dart';
 import 'package:swiftride_mobile/src/trip_models.dart';
@@ -35,6 +36,29 @@ void main() {
     );
     await tester.pumpAndSettle();
   }
+
+  testWidgets('cash is default and completed trip returns to home', (
+    tester,
+  ) async {
+    final api = FakeApi()..restored = trip('Paid', 9);
+    await open(tester, api, FakeRealtime());
+
+    expect(find.text('Chuyến đi hoàn tất'), findsOneWidget);
+    await tester.tap(find.text('Về trang chủ'));
+    await tester.pumpAndSettle();
+    expect(find.text('Bạn muốn đi đâu?'), findsOneWidget);
+    expect(find.text('Chuyến đi hoàn tất'), findsNothing);
+
+    await tester.tap(find.text('Bạn muốn đi đâu?'));
+    await tester.pumpAndSettle();
+    expect(
+      tester
+          .widget<RideLocationPicker>(find.byType(RideLocationPicker))
+          .paymentMethod,
+      RidePaymentMethod.cash,
+    );
+    await tester.pumpWidget(const SizedBox());
+  });
 
   testWidgets(
     'restores one subscription and receives driver GPS without periodic API polling',

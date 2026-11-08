@@ -54,6 +54,12 @@ void main() {
         await tester.tap(find.text('Bạn muốn đi đâu?'));
         await tester.pumpAndSettle();
         expect(
+          tester
+              .widget<RideLocationPicker>(find.byType(RideLocationPicker))
+              .paymentMethod,
+          RidePaymentMethod.cash,
+        );
+        expect(
           tester.widget<GoongMap>(find.byType(GoongMap)).interactive,
           isFalse,
         );

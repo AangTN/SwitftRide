@@ -77,7 +77,7 @@ class _RiderHomeState extends State<RiderHome>
   RidePlace _pickup = defaultPickup;
   RidePlace? _destination;
   RideVehicleType _vehicleType = RideVehicleType.motorcycle;
-  RidePaymentMethod _paymentMethod = RidePaymentMethod.swiftRideWallet;
+  RidePaymentMethod _paymentMethod = RidePaymentMethod.cash;
   bool get _hasRecent => widget.recentDestinations.isNotEmpty;
   List<RidePlace> get _places =>
       _hasRecent ? widget.recentDestinations : suggestedDestinations;
@@ -459,13 +459,12 @@ class _RiderHomeState extends State<RiderHome>
   }
 
   void _dismissTrip() {
-    final paid = _currentTrip?.status == TripStatus.paid;
     setState(() {
       _currentTrip = null;
       _tripRoute = null;
       _routePoints = const [];
       _tripError = null;
-      _tab = paid ? 1 : 0;
+      _tab = 0;
     });
     unawaited(_watchTrip(null));
     unawaited(_loadHistory());
