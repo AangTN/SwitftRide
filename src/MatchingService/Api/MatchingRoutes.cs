@@ -59,6 +59,9 @@ public sealed class MatchingRouteCache(IConfiguration configuration, ILogger<Mat
     public Task DeleteOfferAsync(Guid tripId, Guid proposalId, CancellationToken ct) =>
         AccessAsync(db => db.KeyDeleteAsync(OfferKey(tripId, proposalId)), ct);
 
+    public Task DeleteLegAsync(Guid tripId, TripRouteStage stage, CancellationToken ct) =>
+        AccessAsync(db => db.KeyDeleteAsync(Key(tripId, stage)), ct);
+
     public static string OfferKey(Guid tripId, Guid proposalId) =>
         $"matching:trip:{tripId}:proposal:{proposalId}:pickup";
 
@@ -143,6 +146,7 @@ public sealed class MatchingRoutes(MatchingDatabase database, IGoongClient goong
         try
         {
             var assignment = Assignment(route);
+            var previousDriver = await database.Drivers.Find(assignment).FirstOrDefaultAsync(ct);
             var f = Builders<DriverAvailability>.Filter;
             var stage = f.Lte(x => x.RouteStageVersion, route.StageVersion) | f.Exists(x => x.RouteStageVersion, false);
             var driver = await database.Drivers.FindOneAndUpdateAsync(assignment & stage,
@@ -150,6 +154,9 @@ public sealed class MatchingRoutes(MatchingDatabase database, IGoongClient goong
                     .Set(x => x.ActiveRouteJson, JsonSerializer.Serialize(route)),
                 new FindOneAndUpdateOptions<DriverAvailability> { ReturnDocument = ReturnDocument.After }, ct);
             if (driver is null) return Result(route, null, null);
+
+            if (route.Stage == TripRouteStage.ToDestination && previousDriver?.RouteStageVersion < route.StageVersion)
+                await cache.DeleteLegAsync(route.TripId, TripRouteStage.ToDestination, ct);
 
             RouteLeg? pickup = null;
             if (route.Stage == TripRouteStage.ToPickup)
@@ -175,6 +182,11 @@ public sealed class MatchingRoutes(MatchingDatabase database, IGoongClient goong
             var progressKey = (route.ProposalId, route.StageVersion);
             var previous = progress.Get<Progress>(progressKey);
             if (previous is not null && previous.RecordedAt >= gps.RecordedAt) return;
+            var remaining = current is null ? null : RouteProgress.RemainingFraction(current.Polyline, gps.Latitude, gps.Longitude);
+            await bus.Publish(new TripRouteProgress(route.TripId, route.ProposalId, route.DriverId,
+                route.StageVersion, route.Stage, gps.Latitude, gps.Longitude, gps.RecordedAt,
+                remaining is null ? null : current!.DistanceMeters * remaining,
+                remaining is null ? null : (int)Math.Ceiling(current!.DurationSeconds * remaining.Value)), ct);
             var offRoute = current is null || RouteDeviation.IsOffRoute(current.Polyline, gps.Latitude, gps.Longitude);
             var samples = offRoute ? (previous?.Samples ?? 0) + 1 : 0;
             var lastAttempt = previous?.LastAttempt ?? DateTimeOffset.MinValue;
@@ -207,12 +219,6 @@ public sealed class MatchingRoutes(MatchingDatabase database, IGoongClient goong
         var key = MatchingRouteCache.Key(route.TripId, leg);
         var saved = await cache.ReadAsync(key, ct, refreshExpiry: leg == route.Stage);
         var toPickup = leg == TripRouteStage.ToPickup;
-        if (toPickup && !force && saved is null &&
-            await cache.ReadAsync(MatchingRouteCache.OfferKey(route.TripId, route.ProposalId), ct) is { } offer)
-        {
-            await cache.WriteAsync(key, offer, ct);
-            return offer;
-        }
         var location = driver.Location?.Coordinates;
         var useGps = toPickup || route.Stage == TripRouteStage.ToDestination;
         var hasGps = location is { Length: 2 } && driver.LocationUpdatedAt > DateTime.UtcNow.AddMinutes(-2);
@@ -220,7 +226,7 @@ public sealed class MatchingRoutes(MatchingDatabase database, IGoongClient goong
             MatchingCoordinator.DistanceMeters(location![1], location[0], route.PickupLatitude, route.PickupLongitude) > 60;
         if (!force && saved is not null &&
             (!farFromPickup || !RouteDeviation.IsOffRoute(saved.Polyline, location![1], location[0]))) return saved;
-        if (toPickup && !hasGps) return saved;
+        if ((toPickup || route.Stage == TripRouteStage.ToDestination) && !hasGps) return saved;
         try
         {
             var metrics = await goong.GetRouteAsync(useGps && hasGps ? location![1] : route.PickupLatitude,
@@ -228,13 +234,13 @@ public sealed class MatchingRoutes(MatchingDatabase database, IGoongClient goong
                 toPickup ? route.PickupLatitude : route.DestinationLatitude,
                 toPickup ? route.PickupLongitude : route.DestinationLongitude, route.VehicleType, ct);
             var result = ToLeg(metrics);
-            if (result is null) return saved;
+            if (result is null) return force ? null : saved;
             if (!await database.Drivers.Find(Assignment(route) &
                 Builders<DriverAvailability>.Filter.Eq(x => x.RouteStageVersion, route.StageVersion)).AnyAsync(ct)) return null;
             await cache.WriteAsync(key, result, ct);
             return result;
         }
-        catch (MatchingFailureException) { return saved; }
+        catch (MatchingFailureException) { return force ? null : saved; }
     }
 
     private static FilterDefinition<DriverAvailability> Assignment(TripRouteRequested route) =>

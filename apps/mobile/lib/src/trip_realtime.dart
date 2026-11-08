@@ -33,6 +33,7 @@ class SignalRTripRealtime implements TripRealtimeClient {
       'TripChanged',
       'DriverInvitation',
       'DriverLocationUpdated',
+      'TripRouteProgress',
       'TripRoutePreview',
       'TripRoutesUpdated',
       'RideCompleted',

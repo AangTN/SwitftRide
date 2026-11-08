@@ -12,12 +12,14 @@ class RiderTripPanel extends StatelessWidget {
     required this.onCancel,
     required this.onDismiss,
     this.route,
+    this.progress,
     this.busy = false,
     this.error,
     this.now,
   });
   final TripSnapshot trip;
   final TripRouteSnapshot? route;
+  final TripProgress? progress;
   final bool busy;
   final String? error;
   final DateTime? now;
@@ -78,17 +80,21 @@ class RiderTripPanel extends StatelessWidget {
         ],
         if (approaching) ...[
           TripEta(
-            text: route?.pickupEtaMinutes != null
-                ? 'Tài xế tới đón trong ${route!.pickupEtaMinutes} phút'
-                : 'Tài xế đang di chuyển tới điểm đón',
+            text:
+                progress?.label ??
+                (route?.pickupEtaMinutes != null
+                    ? 'Tài xế tới đón trong ${route!.pickupEtaMinutes} phút'
+                    : 'Tài xế đang di chuyển tới điểm đón'),
           ),
           const SizedBox(height: 12),
         ],
         if (moving) ...[
           TripEta(
-            text: route?.toDestination != null
-                ? '${(route!.toDestination!.durationSeconds / 60).ceil()} phút tới điểm đến'
-                : 'Đang trên đường tới điểm đến',
+            text:
+                progress?.label ??
+                (route?.toDestination != null
+                    ? '${(route!.toDestination!.durationSeconds / 60).ceil()} phút tới điểm đến'
+                    : 'Đang trên đường tới điểm đến'),
           ),
           const SizedBox(height: 12),
         ],

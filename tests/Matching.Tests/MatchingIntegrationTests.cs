@@ -34,7 +34,7 @@ public sealed class RedisMongoFactAttribute : FactAttribute
 public sealed class MatchingIntegrationTests
 {
     [RedisMongoFact]
-    public async Task Accepted_trip_reuses_quote_route_and_switches_stage_without_reusing_stale_commands()
+    public async Task Accepted_trip_refreshes_destination_route_on_pickup_and_rejects_stale_commands()
     {
         await using var f = await Fixture.Create();
         var request = f.Request();
@@ -63,11 +63,11 @@ public sealed class MatchingIntegrationTests
         Assert.NotNull(prepared.ToPickup);
         Assert.NotNull(prepared.ToDestination);
         Assert.Equal(preview.PickupEtaMinutes, prepared.PickupEtaMinutes);
-        Assert.Equal(2, f.Goong.Calls);
+        Assert.Equal(3, f.Goong.Calls);
 
         var pickedUp = await routes.PrepareAsync(toPickup with { Stage = TripRouteStage.ToDestination, StageVersion = 2 }, default);
         Assert.NotNull(pickedUp.ToDestination);
-        Assert.Equal(2, f.Goong.Calls);
+        Assert.Equal(4, f.Goong.Calls);
         var stale = await routes.PrepareAsync(toPickup, default);
         Assert.Null(stale.ToPickup);
         Assert.Null(stale.ToDestination);
@@ -85,11 +85,12 @@ public sealed class MatchingIntegrationTests
             await f.Db.UpdateGpsAsync(f.Driver, new DriverGpsRequest(10.785, 106.695), time, default);
             await routes.TrackAsync(new DriverGpsUpdated(tripId, proposalId, Guid.Parse(f.Driver),
                 10.785, 106.695, time), default);
-            Assert.Equal(i < 2 ? 2 : 3, f.Goong.Calls);
+            Assert.Equal(i < 2 ? 4 : 5, f.Goong.Calls);
             Assert.True(await redisDb.KeyTimeToLiveAsync(activeKey) > TimeSpan.FromMinutes(59));
         }
 
         var reroute = Assert.Single(((Transport)bus).Routes);
+        Assert.Equal(3, ((Transport)bus).Progress.Count);
         Assert.Equal(TripRouteStage.ToDestination, reroute.Stage);
         Assert.Null(reroute.ToPickup);
         Assert.NotNull(reroute.ToDestination);
@@ -319,11 +320,13 @@ public sealed class MatchingIntegrationTests
         public bool Fail { get; set; }
         public List<TripMatchingResult> Messages { get; } = [];
         public List<TripRoutesUpdated> Routes { get; } = [];
+        public List<TripRouteProgress> Progress { get; } = [];
         protected override object? Invoke(MethodInfo? targetMethod, object?[]? args)
         {
             if (Fail) return Task.FromException(new IOException("Test broker unavailable"));
             if (args?[0] is TripMatchingResult result) Messages.Add(result);
             if (args?[0] is TripRoutesUpdated routes) Routes.Add(routes);
+            if (args?[0] is TripRouteProgress progress) Progress.Add(progress);
             return Task.CompletedTask;
         }
     }

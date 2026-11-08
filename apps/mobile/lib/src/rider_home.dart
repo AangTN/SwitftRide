@@ -47,6 +47,7 @@ class _RiderHomeState extends State<RiderHome>
   bool _mapBlocked = false;
   TripSnapshot? _currentTrip;
   TripRouteSnapshot? _tripRoute;
+  TripProgress? _progress;
   List<LatLng> _routePoints = const [];
   final List<TripSnapshot> _history = [];
   bool _tripBusy = false;
@@ -165,7 +166,10 @@ class _RiderHomeState extends State<RiderHome>
     final trip = _currentTrip;
     final data = event.data;
     if (trip == null || data['tripId'] != trip.id) return;
-    if (event.name == 'DriverLocationUpdated') {
+    if (event.name == 'TripRouteProgress') {
+      final value = TripProgress.parse(data, trip, _progress);
+      if (value != null) setState(() => _progress = value);
+    } else if (event.name == 'DriverLocationUpdated') {
       final time = DateTime.tryParse(data['recordedAt']?.toString() ?? '');
       final lat = data['latitude'];
       final lon = data['longitude'];
@@ -603,11 +607,14 @@ class _RiderHomeState extends State<RiderHome>
                 trip.status == TripStatus.enRoute,
             initialTarget: mapCenter,
             initialZoom: 12.5,
-            pickupPoint: LatLng(trip.pickupLatitude, trip.pickupLongitude),
-            destinationPoint: LatLng(
-              trip.destinationLatitude,
-              trip.destinationLongitude,
-            ),
+            pickupPoint: trip.status == TripStatus.pickedUp
+                ? null
+                : LatLng(trip.pickupLatitude, trip.pickupLongitude),
+            destinationPoint:
+                trip.status == TripStatus.driverAccepted ||
+                    trip.status == TripStatus.enRoute
+                ? null
+                : LatLng(trip.destinationLatitude, trip.destinationLongitude),
           ),
         ),
         const Positioned(
@@ -631,6 +638,12 @@ class _RiderHomeState extends State<RiderHome>
             key: _activePanelKey,
             trip: trip,
             route: _tripRoute,
+            progress:
+                _progress?.tripId == trip.id &&
+                    _progress?.stageVersion ==
+                        (trip.status == TripStatus.pickedUp ? 2 : 1)
+                ? _progress
+                : null,
             busy: _tripBusy,
             error:
                 _tripError ??

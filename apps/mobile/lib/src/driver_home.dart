@@ -39,6 +39,7 @@ class _DriverHomeState extends State<DriverHome> with WidgetsBindingObserver {
   StreamSubscription<Position>? gps;
   TripSnapshot? trip;
   TripRouteSnapshot? route;
+  TripProgress? progress;
   final _activePanelKey = GlobalKey();
   double _activePanelHeight = 0;
   LatLng? driverLocation;
@@ -149,7 +150,10 @@ class _DriverHomeState extends State<DriverHome> with WidgetsBindingObserver {
 
   void _onEvent(TripRealtimeEvent event) {
     if (!mounted) return;
-    if (event.name == 'DriverInvitation') {
+    if (event.name == 'TripRouteProgress' && trip != null) {
+      final value = TripProgress.parse(event.data, trip!, progress);
+      if (value != null) setState(() => progress = value);
+    } else if (event.name == 'DriverInvitation') {
       if (busy) {
         pendingInvitation = true;
         return;
@@ -520,10 +524,13 @@ class _DriverHomeState extends State<DriverHome> with WidgetsBindingObserver {
             routePoints: trip == null
                 ? const []
                 : route?.forTrip(trip!)?.decode() ?? const [],
-            pickupPoint: trip == null
+            pickupPoint: trip == null || trip!.status == TripStatus.pickedUp
                 ? null
                 : LatLng(trip!.pickupLatitude, trip!.pickupLongitude),
-            destinationPoint: trip == null
+            destinationPoint:
+                trip == null ||
+                    trip!.status == TripStatus.driverAccepted ||
+                    trip!.status == TripStatus.enRoute
                 ? null
                 : LatLng(trip!.destinationLatitude, trip!.destinationLongitude),
             driverPoint: driverLocation,
@@ -615,17 +622,25 @@ class _DriverHomeState extends State<DriverHome> with WidgetsBindingObserver {
         const SizedBox(height: 12),
         if (approaching) ...[
           TripEta(
-            text: route?.pickupEtaMinutes != null
-                ? 'Tới đón khoảng ${route!.pickupEtaMinutes} phút'
-                : 'Đang di chuyển tới điểm đón',
+            text:
+                (progress?.tripId == t.id && progress?.stageVersion == 1
+                    ? progress?.label
+                    : null) ??
+                (route?.pickupEtaMinutes != null
+                    ? 'Tới đón khoảng ${route!.pickupEtaMinutes} phút'
+                    : 'Đang di chuyển tới điểm đón'),
           ),
           const SizedBox(height: 12),
         ],
         if (picked) ...[
           TripEta(
-            text: route?.toDestination != null
-                ? 'Tới điểm đến khoảng ${(route!.toDestination!.durationSeconds / 60).ceil()} phút'
-                : 'Đang trên đường tới điểm đến',
+            text:
+                (progress?.tripId == t.id && progress?.stageVersion == 2
+                    ? progress?.label
+                    : null) ??
+                (route?.toDestination != null
+                    ? 'Tới điểm đến khoảng ${(route!.toDestination!.durationSeconds / 60).ceil()} phút'
+                    : 'Đang trên đường tới điểm đến'),
           ),
           const SizedBox(height: 12),
         ],

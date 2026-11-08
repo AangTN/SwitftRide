@@ -12,6 +12,7 @@ builder.Services.AddServiceDefaults(builder.Configuration, builder.Environment.I
     x.AddConsumer<TripMatchingResultConsumer>(c => c.UseMessageRetry(r => r.Interval(3, TimeSpan.FromMilliseconds(200))));
     x.AddConsumer<DriverGpsUpdatedConsumer>();
     x.AddConsumer<TripRoutesUpdatedConsumer>();
+    x.AddConsumer<TripRouteProgressConsumer>();
     x.AddConsumer<TripRoutePreviewConsumer>();
     x.AddRequestClient<SwiftRide.Contracts.Trips.GetTripRoutePreview>();
     x.AddRequestClient<SwiftRide.Contracts.Trips.GetTripRoutes>();

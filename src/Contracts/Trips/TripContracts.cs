@@ -15,6 +15,9 @@ public sealed record DriverReservationReleaseRequested(Guid TripId, Guid Proposa
 public sealed record DriverReservationConfirmed(Guid TripId, Guid ProposalId, Guid DriverId);
 public sealed record TripMatchingResult(Guid TripId, Guid ProposalId, TripProposalCandidate? Candidate, string? FailureCode = null);
 public sealed record DriverGpsUpdated(Guid TripId, Guid ProposalId, Guid DriverId, double Latitude, double Longitude, DateTimeOffset RecordedAt);
+public sealed record TripRouteProgress(Guid TripId, Guid ProposalId, Guid DriverId, int StageVersion,
+    TripRouteStage Stage, double Latitude, double Longitude, DateTimeOffset RecordedAt,
+    double? RemainingMeters, int? RemainingSeconds);
 public sealed record PaymentRequested(string PaymentId, Guid TripId, Guid RiderId, Guid DriverId, decimal Amount, string Currency, string PaymentMethod = "Wallet");
 
 public enum TripRouteStage { ToPickup, ToDestination }

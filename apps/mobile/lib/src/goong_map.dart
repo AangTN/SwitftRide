@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:math' as math;
 import 'dart:math' show Point;
 import 'dart:ui' as ui;
 
@@ -61,8 +62,11 @@ class GoongMapState extends State<GoongMap> {
   bool _syncingTrip = false;
   bool _tripSyncPending = false;
   final List<Circle> _tripMarkers = [];
+  final List<Symbol> _placeSymbols = [];
+  bool _placeIconsReady = false;
   Timer? _pulseTimer;
   bool _reduceMotion = false;
+  LatLng? _headingPoint;
 
   @override
   void initState() {
@@ -81,6 +85,11 @@ class GoongMapState extends State<GoongMap> {
   @override
   void didUpdateWidget(GoongMap oldWidget) {
     super.didUpdateWidget(oldWidget);
+    if (widget.driverPoint != null &&
+        widget.driverPoint != oldWidget.driverPoint &&
+        widget.routePoints.length > 1) {
+      _followDriver(widget.driverPoint!);
+    }
     if (oldWidget.interactive != widget.interactive) _restartPulse();
     if (oldWidget.bottomInset != widget.bottomInset) _fittedRoute = const [];
     if (oldWidget.bottomInset != widget.bottomInset ||
@@ -114,6 +123,10 @@ class GoongMapState extends State<GoongMap> {
         await controller.removeCircle(marker);
       }
       _tripMarkers.clear();
+      for (final symbol in _placeSymbols) {
+        await controller.removeSymbol(symbol);
+      }
+      _placeSymbols.clear();
       if (_driverVehicle != null) {
         await controller.removeSymbol(_driverVehicle!);
         _driverVehicle = null;
@@ -149,33 +162,70 @@ class GoongMapState extends State<GoongMap> {
         }
         _tripLine = await controller.addLine(
           LineOptions(
-            geometry: widget.routePoints,
+            geometry: _remainingRoute(widget.routePoints, widget.driverPoint),
             lineColor: '#00B650',
             lineWidth: 5,
             lineOpacity: .92,
           ),
         );
       }
-      for (final point in [
-        if (widget.pickupPoint != null) (widget.pickupPoint!, '#00B650'),
+      if (!_placeIconsReady) {
+        for (final entry in [
+          ('pickup-icon', Icons.my_location_rounded, const Color(0xff00b650)),
+          (
+            'destination-icon',
+            Icons.location_on_rounded,
+            const Color(0xff1687ff),
+          ),
+        ]) {
+          final recorder = ui.PictureRecorder();
+          final canvas = Canvas(recorder);
+          canvas.drawCircle(
+            const Offset(32, 32),
+            31,
+            Paint()..color = Colors.white,
+          );
+          final painter = TextPainter(
+            text: TextSpan(
+              text: String.fromCharCode(entry.$2.codePoint),
+              style: TextStyle(
+                fontFamily: entry.$2.fontFamily,
+                fontSize: 44,
+                color: entry.$3,
+              ),
+            ),
+            textDirection: TextDirection.ltr,
+          )..layout();
+          painter.paint(
+            canvas,
+            Offset((64 - painter.width) / 2, (64 - painter.height) / 2),
+          );
+          final picture = recorder.endRecording();
+          final image = await picture.toImage(64, 64);
+          final bytes = await image.toByteData(format: ui.ImageByteFormat.png);
+          await controller.addImage(entry.$1, bytes!.buffer.asUint8List());
+          painter.dispose();
+          image.dispose();
+          picture.dispose();
+        }
+        _placeIconsReady = true;
+      }
+      for (final place in [
+        if (widget.pickupPoint != null) (widget.pickupPoint!, 'pickup-icon'),
         if (widget.destinationPoint != null)
-          (widget.destinationPoint!, '#00B650'),
-        if (widget.driverPoint != null && !widget.driverApproaching)
-          (widget.driverPoint!, '#00B650'),
+          (widget.destinationPoint!, 'destination-icon'),
       ]) {
-        _tripMarkers.add(
-          await controller.addCircle(
-            CircleOptions(
-              geometry: point.$1,
-              circleRadius: 8,
-              circleColor: point.$2,
-              circleStrokeColor: '#ffffff',
-              circleStrokeWidth: 3,
+        _placeSymbols.add(
+          await controller.addSymbol(
+            SymbolOptions(
+              geometry: place.$1,
+              iconImage: place.$2,
+              iconSize: .6,
             ),
           ),
         );
       }
-      if (widget.driverPoint != null && widget.driverApproaching) {
+      if (widget.driverPoint != null) {
         if (!_vehicleIconReady) {
           final recorder = ui.PictureRecorder();
           final canvas = Canvas(recorder);
@@ -230,6 +280,65 @@ class GoongMapState extends State<GoongMap> {
     }
   }
 
+  List<LatLng> _remainingRoute(List<LatLng> points, LatLng? position) {
+    if (position == null || points.length < 2) return points;
+    final scale = math.cos(position.latitude * math.pi / 180);
+    var best = double.infinity, segment = 0, fraction = 0.0;
+    for (var i = 0; i < points.length - 1; i++) {
+      final a = points[i], b = points[i + 1];
+      final ax = (a.longitude - position.longitude) * scale * 111195;
+      final ay = (a.latitude - position.latitude) * 111195;
+      final dx = (b.longitude - a.longitude) * scale * 111195;
+      final dy = (b.latitude - a.latitude) * 111195;
+      final length = dx * dx + dy * dy;
+      final t = length == 0
+          ? 0.0
+          : (-(ax * dx + ay * dy) / length).clamp(0.0, 1.0);
+      final distance = math.pow(ax + dx * t, 2) + math.pow(ay + dy * t, 2);
+      if (distance < best) {
+        best = distance.toDouble();
+        segment = i;
+        fraction = t;
+      }
+    }
+    if (best > 3600) return points;
+    final a = points[segment], b = points[segment + 1];
+    return [
+      LatLng(
+        a.latitude + (b.latitude - a.latitude) * fraction,
+        a.longitude + (b.longitude - a.longitude) * fraction,
+      ),
+      ...points.skip(segment + 1),
+    ];
+  }
+
+  void _followDriver(LatLng point) {
+    final previous = _headingPoint;
+    if (previous == null) {
+      _headingPoint = point;
+      return;
+    }
+    final dy = (point.latitude - previous.latitude) * 111195;
+    final dx =
+        (point.longitude - previous.longitude) *
+        111195 *
+        math.cos(point.latitude * math.pi / 180);
+    if (dx * dx + dy * dy < 100) return;
+    _headingPoint = point;
+    final controller = _controller;
+    if (!_ready || controller == null) return;
+    final bearing = (math.atan2(dx, dy) * 180 / math.pi + 360) % 360;
+    unawaited(
+      controller
+          .animateCamera(
+            CameraUpdate.newCameraPosition(
+              CameraPosition(target: point, zoom: 16, bearing: bearing),
+            ),
+          )
+          .catchError((_) => false),
+    );
+  }
+
   void _restartPulse() {
     _pulseTimer?.cancel();
     final controller = _controller;
@@ -280,6 +389,7 @@ class GoongMapState extends State<GoongMap> {
       _ready = false;
       _fittedRoute = const [];
       _vehicleIconReady = false;
+      _placeIconsReady = false;
     });
     if (goongMaptilesKey.isEmpty) {
       setState(() => _error = 'Chưa có cấu hình bản đồ Goong.');

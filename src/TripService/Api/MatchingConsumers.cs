@@ -13,6 +13,21 @@ public sealed class TripMatchingResultConsumer(TripMatchingResultHandler handler
         await handler.ApplyAsync(context.Message, context.CancellationToken);
 }
 
+public sealed class TripRouteProgressConsumer(TripDbContext db, IHubContext<TripHub> hub) : IConsumer<TripRouteProgress>
+{
+    public async Task Consume(ConsumeContext<TripRouteProgress> context)
+    {
+        var m = context.Message;
+        var rider = await db.Trips.Where(t => t.Id == m.TripId && t.DriverId == m.DriverId &&
+            ((m.Stage == TripRouteStage.ToPickup && (t.Status == TripStatus.DriverAccepted || t.Status == TripStatus.EnRoute)) ||
+             (m.Stage == TripRouteStage.ToDestination && t.Status == TripStatus.PickedUp)) &&
+            t.Proposals.Any(p => p.Id == m.ProposalId && p.DriverId == m.DriverId && p.Status == ProposalStatus.DriverAccepted))
+            .Select(t => (Guid?)t.RiderId).SingleOrDefaultAsync(context.CancellationToken);
+        if (rider is Guid id)
+            await hub.Clients.Users(id.ToString(), m.DriverId.ToString()).SendAsync("TripRouteProgress", m, context.CancellationToken);
+    }
+}
+
 public sealed class DriverGpsUpdatedConsumer(TripDbContext db, IHubContext<TripHub> hub) : IConsumer<DriverGpsUpdated>
 {
     public Task Consume(ConsumeContext<DriverGpsUpdated> context) => ForwardAsync(context.Message, context.CancellationToken);

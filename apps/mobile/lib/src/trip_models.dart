@@ -404,3 +404,61 @@ DateTime _requiredDate(Map<String, dynamic> json, String key) {
   if (value == null) throw FormatException('Invalid trip field: $key.');
   return value;
 }
+
+class TripProgress {
+  TripProgress(
+    this.tripId,
+    this.proposalId,
+    this.driverId,
+    this.stageVersion,
+    this.recordedAt,
+    this.distance,
+    this.seconds,
+  );
+  final String tripId, proposalId, driverId;
+  final int stageVersion;
+  final DateTime recordedAt;
+  final double? distance;
+  final int? seconds;
+
+  static TripProgress? parse(
+    Map<String, dynamic> data,
+    TripSnapshot trip,
+    TripProgress? old,
+  ) {
+    final version = data['stageVersion'];
+    final date = DateTime.tryParse('${data['recordedAt']}');
+    final expected = trip.status == TripStatus.pickedUp
+        ? 2
+        : (trip.status == TripStatus.enRoute ||
+                  trip.status == TripStatus.driverAccepted
+              ? 1
+              : 0);
+    if (data['tripId'] != trip.id ||
+        data['proposalId'] != trip.currentProposal?.id ||
+        data['driverId'] != trip.driverId ||
+        version != expected ||
+        date == null ||
+        (old != null &&
+            old.tripId == trip.id &&
+            old.stageVersion == version &&
+            !date.isAfter(old.recordedAt))) {
+      return null;
+    }
+    final meters = data['remainingMeters'];
+    final seconds = data['remainingSeconds'];
+    return TripProgress(
+      trip.id,
+      data['proposalId'] as String,
+      data['driverId'] as String,
+      version as int,
+      date,
+      meters is num && meters >= 0 ? meters.toDouble() : null,
+      seconds is num && seconds >= 0 ? seconds.toInt() : null,
+    );
+  }
+
+  String get label => distance == null || seconds == null
+      ? 'Đang cập nhật tuyến đường'
+      : 'Còn khoảng ${(distance! / 1000).toStringAsFixed(1)} km · ${(seconds! / 60).ceil()} phút';
+}
