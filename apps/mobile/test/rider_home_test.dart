@@ -22,6 +22,53 @@ void main() {
     )..addFont(rootBundle.load('fonts/MaterialIcons-Regular.otf'))).load();
   });
 
+  testWidgets('pickup suggestions resolve a real place into the pickup field', (
+    tester,
+  ) async {
+    final lookup = FakePlaces();
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: RideLocationPicker(
+            pickup: defaultPickup,
+            recentDestinations: const [],
+            suggestions: const [
+              RidePlace(
+                'Đại học Sài Gòn',
+                'Gợi ý trường',
+                null,
+                'Đại học Sài Gòn',
+              ),
+            ],
+            vehicleType: RideVehicleType.motorcycle,
+            paymentMethod: RidePaymentMethod.cash,
+            places: lookup,
+          ),
+        ),
+      ),
+    );
+    await tester.tap(find.byKey(const Key('pickup-field')));
+    await tester.pumpAndSettle();
+    expect(find.text('Điểm đón đề xuất'), findsOneWidget);
+    await tester.tap(find.text('Đại học Sài Gòn'));
+    await tester.pumpAndSettle();
+    expect(lookup.detailCalls, 1);
+    expect(
+      tester
+          .widget<TextFormField>(find.byKey(const Key('pickup-field')))
+          .controller!
+          .text,
+      'Đại học Sài Gòn',
+    );
+    expect(
+      tester
+          .widget<TextFormField>(find.byKey(const Key('destination-field')))
+          .controller!
+          .text,
+      isEmpty,
+    );
+  });
+
   testWidgets(
     'phone layouts select both fields and apply vehicle/payment with no GPS',
     (tester) async {

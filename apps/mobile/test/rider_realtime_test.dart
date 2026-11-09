@@ -129,7 +129,7 @@ void main() {
     api.onRoute = () async => null;
     slow.complete(route('ToPickup', 1));
     await tester.pumpAndSettle();
-    expect(find.text('Đang di chuyển'), findsOneWidget);
+    expect(find.text('Đang trên đường'), findsOneWidget);
     expect(tester.widget<GoongMap>(find.byType(GoongMap)).routePoints, isEmpty);
     realtime.emit('TripRoutesUpdated', routeJson('ToDestination', 2));
     await tester.pumpAndSettle();

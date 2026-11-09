@@ -17,6 +17,257 @@ String moneyVnd(num? amount) {
   return '${digits.replaceAllMapped(RegExp(r'(\d)(?=(\d{3})+(?!\d))'), (m) => '${m[1]}.')} ₫';
 }
 
+class TripHistoryCard extends StatelessWidget {
+  const TripHistoryCard({super.key, required this.trip, required this.onTap});
+  final TripSnapshot trip;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final date = trip.createdAt.toLocal();
+    const weekdays = [
+      'Thứ Hai',
+      'Thứ Ba',
+      'Thứ Tư',
+      'Thứ Năm',
+      'Thứ Sáu',
+      'Thứ Bảy',
+      'Chủ Nhật',
+    ];
+    String two(int value) => value.toString().padLeft(2, '0');
+    final dateText =
+        '${weekdays[date.weekday - 1]}, ${two(date.day)}/${two(date.month)}/${date.year} · ${two(date.hour)}:${two(date.minute)}';
+    final (status, statusColor, statusBackground, icon) = switch (trip.status) {
+      TripStatus.paid => (
+        'Đã hoàn thành',
+        const Color(0xFF087834),
+        const Color(0xFFDDF5E3),
+        Icons.check_rounded,
+      ),
+      TripStatus.cancelled => (
+        'Đã hủy',
+        muted,
+        const Color(0xFFF0F2F4),
+        Icons.close_rounded,
+      ),
+      TripStatus.failed => (
+        'Thất bại',
+        const Color(0xFFB3261E),
+        const Color(0xFFFFEBEE),
+        Icons.error_outline_rounded,
+      ),
+      TripStatus.paymentPending when trip.paymentStatus == 'Failed' => (
+        'Thanh toán lỗi',
+        const Color(0xFFB42318),
+        const Color(0xFFFFEBEE),
+        Icons.error_outline_rounded,
+      ),
+      TripStatus.droppedOff || TripStatus.paymentPending => (
+        'Đang xử lý',
+        const Color(0xFF996000),
+        const Color(0xFFFFF3E0),
+        Icons.schedule_rounded,
+      ),
+      _ => ('Đang thực hiện', green, tripMint, Icons.schedule_rounded),
+    };
+    return Material(
+      color: Colors.white,
+      elevation: 1,
+      shadowColor: const Color(0x180D3721),
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(15),
+        side: const BorderSide(color: tripBorder),
+      ),
+      clipBehavior: Clip.antiAlias,
+      child: InkWell(
+        onTap: onTap,
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Padding(
+              padding: const EdgeInsets.fromLTRB(14, 10, 10, 6),
+              child: Row(
+                children: [
+                  const Icon(
+                    Icons.calendar_today_outlined,
+                    size: 15,
+                    color: muted,
+                  ),
+                  const SizedBox(width: 7),
+                  Expanded(
+                    child: Text(
+                      dateText,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(
+                        color: muted,
+                        fontSize: 11,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                  ),
+                  const SizedBox(width: 5),
+                  Container(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 8,
+                      vertical: 4,
+                    ),
+                    decoration: BoxDecoration(
+                      color: statusBackground,
+                      borderRadius: BorderRadius.circular(20),
+                    ),
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Icon(icon, color: statusColor, size: 14),
+                        const SizedBox(width: 3),
+                        Text(
+                          status,
+                          style: TextStyle(
+                            color: statusColor,
+                            fontSize: 10,
+                            fontWeight: FontWeight.w700,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            Padding(
+              padding: const EdgeInsets.fromLTRB(14, 3, 14, 9),
+              child: Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Column(
+                    children: [
+                      Icon(Icons.trip_origin_rounded, size: 17, color: green),
+                      _HistoryDots(),
+                      Icon(Icons.location_on_rounded, size: 17, color: green),
+                    ],
+                  ),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        _HistoryStop(
+                          label: 'Điểm đón',
+                          address: trip.pickupAddress,
+                        ),
+                        const SizedBox(height: 6),
+                        _HistoryStop(
+                          label: 'Điểm đến',
+                          address: trip.destinationAddress,
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+              decoration: const BoxDecoration(
+                color: Color(0xFFF0FAF3),
+                border: Border(top: BorderSide(color: tripBorder)),
+              ),
+              child: Row(
+                children: [
+                  Icon(
+                    trip.isCash
+                        ? Icons.payments_outlined
+                        : Icons.account_balance_wallet_outlined,
+                    color: const Color(0xFF087834),
+                    size: 21,
+                  ),
+                  const SizedBox(width: 9),
+                  Expanded(
+                    child: Text(
+                      moneyVnd(
+                        trip.agreedAmount ?? trip.currentProposal?.amount,
+                      ),
+                      style: const TextStyle(
+                        color: Color(0xFF087834),
+                        fontSize: 16,
+                        fontWeight: FontWeight.w800,
+                      ),
+                    ),
+                  ),
+                  Container(
+                    decoration: BoxDecoration(
+                      color: const Color(0xFFDDF5E3),
+                      borderRadius: BorderRadius.circular(7),
+                    ),
+                    child: const Icon(
+                      Icons.chevron_right_rounded,
+                      color: Color(0xFF087834),
+                      size: 24,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _HistoryStop extends StatelessWidget {
+  const _HistoryStop({required this.label, required this.address});
+  final String label, address;
+  @override
+  Widget build(BuildContext context) => Column(
+    crossAxisAlignment: CrossAxisAlignment.start,
+    children: [
+      Text(
+        label,
+        style: const TextStyle(
+          color: muted,
+          fontSize: 10,
+          fontWeight: FontWeight.w600,
+        ),
+      ),
+      Text(
+        address,
+        maxLines: 2,
+        overflow: TextOverflow.ellipsis,
+        style: const TextStyle(
+          color: ink,
+          fontSize: 12,
+          fontWeight: FontWeight.w700,
+        ),
+      ),
+    ],
+  );
+}
+
+class _HistoryDots extends StatelessWidget {
+  const _HistoryDots();
+  @override
+  Widget build(BuildContext context) => SizedBox(
+    height: 20,
+    width: 17,
+    child: Column(
+      mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+      children: [
+        for (var i = 0; i < 5; i++)
+          Container(
+            width: 2,
+            height: 2,
+            decoration: const BoxDecoration(
+              color: green,
+              shape: BoxShape.circle,
+            ),
+          ),
+      ],
+    ),
+  );
+}
+
 class TripCard extends StatelessWidget {
   const TripCard({
     super.key,
@@ -28,16 +279,8 @@ class TripCard extends StatelessWidget {
   final Color color;
   final double padding;
   @override
-  Widget build(BuildContext c) => Container(
-    width: double.infinity,
-    padding: EdgeInsets.all(padding),
-    decoration: BoxDecoration(
-      color: color,
-      borderRadius: BorderRadius.circular(18),
-      border: Border.all(color: tripBorder),
-    ),
-    child: child,
-  );
+  Widget build(BuildContext c) =>
+      Padding(padding: const EdgeInsets.symmetric(vertical: 4), child: child);
 }
 
 class TripAction extends StatelessWidget {
@@ -389,71 +632,44 @@ class TripFareSummary extends StatelessWidget {
   const TripFareSummary({super.key, required this.trip});
   final TripSnapshot trip;
   @override
-  Widget build(BuildContext c) {
-    final amount = trip.agreedAmount ?? trip.currentProposal?.amount;
-    return TripCard(
-      color: tripMint,
-      padding: 12,
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          const Text(
-            'Giá chuyến',
-            style: TextStyle(
-              color: muted,
-              fontSize: 11,
-              fontWeight: FontWeight.w600,
-            ),
+  Widget build(BuildContext c) => Row(
+    children: [
+      const Icon(Icons.receipt_long_outlined, color: muted, size: 19),
+      const SizedBox(width: 12),
+      Expanded(
+        child: Text(
+          moneyVnd(trip.agreedAmount ?? trip.currentProposal?.amount),
+          style: const TextStyle(
+            color: ink,
+            fontSize: 14,
+            fontWeight: FontWeight.w700,
           ),
-          const SizedBox(height: 4),
-          Row(
-            children: [
-              Text(
-                moneyVnd(amount),
-                style: const TextStyle(
-                  color: green,
-                  fontSize: 19,
-                  fontWeight: FontWeight.w800,
-                ),
-              ),
-              const Spacer(),
-              TripPaymentMethodLabel(trip: trip),
-            ],
-          ),
-        ],
+        ),
       ),
-    );
-  }
+      TripPaymentMethodLabel(trip: trip),
+    ],
+  );
 }
 
 class TripEta extends StatelessWidget {
   const TripEta({super.key, required this.text});
   final String text;
   @override
-  Widget build(BuildContext c) => Container(
-    width: double.infinity,
-    padding: const EdgeInsets.all(13),
-    decoration: BoxDecoration(
-      color: tripMint,
-      borderRadius: BorderRadius.circular(13),
-    ),
-    child: Row(
-      mainAxisAlignment: MainAxisAlignment.center,
-      children: [
-        const Icon(Icons.schedule_rounded, color: green, size: 20),
-        const SizedBox(width: 8),
-        Flexible(
-          child: Text(
-            text,
-            style: const TextStyle(
-              color: Color(0xFF00883B),
-              fontWeight: FontWeight.w700,
-              fontSize: 14,
-            ),
+  Widget build(BuildContext c) => Row(
+    children: [
+      const Icon(Icons.schedule_rounded, color: green, size: 19),
+      const SizedBox(width: 8),
+      Expanded(
+        child: Text(
+          text,
+          style: const TextStyle(
+            color: green,
+            fontWeight: FontWeight.w700,
+            fontSize: 14,
           ),
         ),
-      ],
-    ),
+      ),
+    ],
   );
 }
 

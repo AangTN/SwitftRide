@@ -25,7 +25,6 @@ class RiderHome extends StatefulWidget {
     this.places,
     this.tripApi,
     this.realtime,
-    this.recentDestinations = const [],
   });
 
   final String fullName;
@@ -33,7 +32,6 @@ class RiderHome extends StatefulWidget {
   final PlaceLookup? places;
   final TripApi? tripApi;
   final TripRealtimeClient? realtime;
-  final List<RidePlace> recentDestinations;
 
   @override
   State<RiderHome> createState() => _RiderHomeState();
@@ -80,11 +78,110 @@ class _RiderHomeState extends State<RiderHome>
   RidePlace? _destination;
   RideVehicleType _vehicleType = RideVehicleType.motorcycle;
   RidePaymentMethod _paymentMethod = RidePaymentMethod.cash;
-  bool get _hasRecent => widget.recentDestinations.isNotEmpty;
+  List<RidePlace> _suggestions = [];
+  bool _suggestionsLoading = false;
+
+  List<RidePlace> _recentPickups = [];
+  List<RidePlace> _recentDestinations = [];
+  int _recentRequestVersion = 0;
+
   List<RidePlace> get _places =>
-      _hasRecent ? widget.recentDestinations : suggestedDestinations;
-  String get _placesTitle =>
-      _hasRecent ? 'Điểm đến gần đây' : 'Điểm đến đề xuất';
+      suggestedPlaces(_recentDestinations, _suggestions);
+
+  Future<void> _loadRecentPlaces() async {
+    final api = widget.tripApi;
+    if (api == null) return;
+    final request = ++_recentRequestVersion;
+    final now = DateTime.now();
+    final cutoff = now.subtract(const Duration(days: 7));
+    final trips = <TripSnapshot>[];
+    try {
+      var pageNumber = 1;
+      const pageSize = 100;
+      while (true) {
+        final page = await api.history(page: pageNumber, pageSize: pageSize);
+        if (!mounted || request != _recentRequestVersion) return;
+        trips.addAll(page.items);
+        if (page.items.isEmpty ||
+            trips.length >= page.total ||
+            page.items.any((trip) => trip.createdAt.isBefore(cutoff))) {
+          break;
+        }
+        pageNumber++;
+      }
+      if (!mounted || request != _recentRequestVersion) return;
+      setState(() {
+        _recentPickups = rankRecentTripPlaces(trips, pickup: true, now: now);
+        _recentDestinations = rankRecentTripPlaces(
+          trips,
+          pickup: false,
+          now: now,
+        );
+      });
+    } catch (_) {
+      if (mounted && request == _recentRequestVersion) {
+        setState(() {
+          _recentPickups = [];
+          _recentDestinations = [];
+        });
+      }
+    }
+  }
+
+  Future<void> _loadSuggestions() async {
+    final api = widget.places;
+    if (api == null) return;
+    setState(() => _suggestionsLoading = true);
+    try {
+      final batches = await Future.wait([
+        for (final query in [
+          'Chợ Bến Thành',
+          'Nhà thờ Đức Bà',
+          'Phố đi bộ Nguyễn Huệ',
+        ])
+          api.search(query).catchError((Object _) => <PlacePrediction>[]),
+      ]);
+      if (!mounted) return;
+      final results = <PlacePrediction>[
+        for (final batch in batches)
+          if (batch.isNotEmpty) batch.first,
+        for (final batch in batches) ...batch.skip(1),
+      ];
+      setState(
+        () => _suggestions = [
+          for (final item in results)
+            RidePlace(
+              item.description.split(',').first.trim(),
+              item.description,
+              null,
+              item.placeId,
+            ),
+        ],
+      );
+    } catch (_) {
+      if (mounted) setState(() => _suggestions = []);
+    } finally {
+      if (mounted) setState(() => _suggestionsLoading = false);
+    }
+  }
+
+  Future<void> _selectHomePlace(RidePlace place) async {
+    if (place.isResolved) return _selectLocations(destination: place);
+    if (place.placeId == null || widget.places == null || _suggestionsLoading) {
+      return;
+    }
+    setState(() => _suggestionsLoading = true);
+    try {
+      final resolved = await widget.places!.details(place.placeId!);
+      if (mounted && resolved.isResolved) {
+        await _selectLocations(destination: resolved);
+      }
+    } catch (_) {
+      if (mounted) _showMessage('Không tải được địa điểm. Vui lòng thử lại.');
+    } finally {
+      if (mounted) setState(() => _suggestionsLoading = false);
+    }
+  }
 
   void _settlePanel(double velocity) {
     final expanded = velocity.abs() > 400
@@ -100,6 +197,8 @@ class _RiderHomeState extends State<RiderHome>
     _realtime = widget.realtime ?? widget.tripApi?.createRealtime();
     _realtimeSubscription = _realtime?.events.listen(_onRealtime);
     unawaited(_restoreTrip());
+    unawaited(_loadRecentPlaces());
+    unawaited(_loadSuggestions());
     _tripTicker = Timer.periodic(const Duration(seconds: 1), (_) {
       if (mounted && _currentTrip != null) {
         setState(() => _now = DateTime.now());
@@ -121,6 +220,7 @@ class _RiderHomeState extends State<RiderHome>
   void didChangeAppLifecycleState(AppLifecycleState state) {
     if (state == AppLifecycleState.resumed) {
       unawaited(_currentTrip == null ? _restoreTrip() : _refreshTrip());
+      unawaited(_loadRecentPlaces());
     }
   }
 
@@ -476,6 +576,7 @@ class _RiderHomeState extends State<RiderHome>
     });
     unawaited(_watchTrip(null));
     unawaited(_loadHistory());
+    unawaited(_loadRecentPlaces());
   }
 
   void _showTripDetails(TripSnapshot trip) {
@@ -533,7 +634,9 @@ class _RiderHomeState extends State<RiderHome>
                 pickup: _pickup,
                 destination: destination ?? _destination,
                 places: widget.places,
-                recentDestinations: widget.recentDestinations,
+                recentDestinations: _recentDestinations,
+                recentPickups: _recentPickups,
+                suggestions: _suggestions,
                 vehicleType: _vehicleType,
                 paymentMethod: _paymentMethod,
               ),
@@ -823,15 +926,13 @@ class _RiderHomeState extends State<RiderHome>
                                       Row(
                                         children: [
                                           Icon(
-                                            _hasRecent
-                                                ? Icons.history_rounded
-                                                : Icons.explore_outlined,
+                                            Icons.explore_outlined,
                                             color: green,
                                             size: 21,
                                           ),
                                           const SizedBox(width: 8),
                                           Text(
-                                            _placesTitle,
+                                            'Điểm đến đề xuất',
                                             style: const TextStyle(
                                               fontSize: 14,
                                               fontWeight: FontWeight.w700,
@@ -842,6 +943,15 @@ class _RiderHomeState extends State<RiderHome>
                                       const SizedBox(height: 12),
                                       for (final place in _places)
                                         _homePlace(place),
+                                      if (_places.isEmpty &&
+                                          !_suggestionsLoading)
+                                        const Text(
+                                          'Nhập địa điểm để tìm kiếm.',
+                                          style: TextStyle(
+                                            color: muted,
+                                            fontSize: 12,
+                                          ),
+                                        ),
                                     ],
                                   ),
                                 ),
@@ -896,17 +1006,17 @@ class _RiderHomeState extends State<RiderHome>
   Widget _homePlace(RidePlace place) => Padding(
     padding: const EdgeInsets.only(bottom: 7),
     child: Material(
-      color: const Color(0xFFF1F9F4),
+      color: Colors.white,
       shape: RoundedRectangleBorder(
         borderRadius: BorderRadius.circular(15),
-        side: const BorderSide(color: Color(0xFFDCEDE2)),
+        side: const BorderSide(color: Color(0xFFEDF0EE)),
       ),
       child: ListTile(
         dense: true,
         visualDensity: const VisualDensity(vertical: -2),
         leading: const CircleAvatar(
           radius: 18,
-          backgroundColor: Color(0xFFDDF2E5),
+          backgroundColor: Color(0xFFEDF8F0),
           child: Icon(Icons.place_rounded, color: green, size: 23),
         ),
         title: Text(
@@ -919,12 +1029,12 @@ class _RiderHomeState extends State<RiderHome>
           overflow: TextOverflow.ellipsis,
           style: const TextStyle(
             fontSize: 11,
-            color: Color(0xFF53665C),
-            fontWeight: FontWeight.w600,
+            color: Color(0xFF66756D),
+            fontWeight: FontWeight.w500,
           ),
         ),
         trailing: const Icon(Icons.chevron_right_rounded, color: green),
-        onTap: () => _selectLocations(destination: place),
+        onTap: () => _selectHomePlace(place),
       ),
     ),
   );

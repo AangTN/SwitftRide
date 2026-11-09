@@ -53,9 +53,7 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
-  testWidgets('picked up hides driver identity and duplicate trip metrics', (
-    tester,
-  ) async {
+  testWidgets('picked up shows a compact trip summary', (tester) async {
     final data = snapshot(status: 'PickedUp')..['driverId'] = 'driver-1';
     final proposal = (data['proposals'] as List).single as Map<String, dynamic>;
     proposal['status'] = 'DriverAccepted';
@@ -73,11 +71,10 @@ void main() {
       ),
     );
     await tester.pumpAndSettle();
-    expect(find.text('Minh Anh'), findsNothing);
-    expect(find.text('59A1-12345'), findsNothing);
+    expect(find.text('Minh Anh'), findsOneWidget);
+    expect(find.text('59A1-12345'), findsOneWidget);
     expect(find.text('Quãng đường chuyến'), findsNothing);
     expect(find.text('Destination'), findsOneWidget);
-    expect(find.text('Giá chuyến'), findsOneWidget);
     expect(find.text('35.000 ₫'), findsOneWidget);
     expect(find.text('Ví SwiftRide'), findsOneWidget);
     expect(tester.takeException(), isNull);
@@ -108,7 +105,6 @@ void main() {
       expect(find.text('59A1-12345'), findsOneWidget);
       expect(find.text('Quãng đường chuyến'), findsNothing);
       expect(find.text('Pickup'), findsOneWidget);
-      expect(find.text('Giá chuyến'), findsOneWidget);
       expect(find.text('35.000 ₫'), findsOneWidget);
       expect(find.text('Ví SwiftRide'), findsOneWidget);
       expect(tester.takeException(), isNull);

@@ -646,16 +646,6 @@ class _DriverHomeState extends State<DriverHome> with WidgetsBindingObserver {
             )
           : null,
       children: [
-        if (!picked) ...[
-          TripPersonCard(
-            name: t.riderName ?? 'Khách hàng',
-            subtitle: approaching ? t.riderPhone : 'Khách hàng SwiftRide',
-            onCall: t.riderPhone != null && approaching
-                ? () => launchUrl(Uri(scheme: 'tel', path: t.riderPhone))
-                : null,
-          ),
-          const SizedBox(height: 12),
-        ],
         if (approaching) ...[
           TripEta(
             text:
@@ -680,6 +670,20 @@ class _DriverHomeState extends State<DriverHome> with WidgetsBindingObserver {
           ),
           const SizedBox(height: 12),
         ],
+        if (!picked) ...[
+          TripPersonCard(
+            name: t.riderName ?? 'Khách hàng',
+            subtitle: approaching ? t.riderPhone : 'Khách hàng SwiftRide',
+            onCall: t.riderPhone != null && approaching
+                ? () => launchUrl(Uri(scheme: 'tel', path: t.riderPhone))
+                : null,
+          ),
+          const SizedBox(height: 8),
+          if (approaching) ...[
+            const Divider(height: 1, color: tripBorder),
+            const SizedBox(height: 8),
+          ],
+        ],
         if (invite)
           TripJourneyCard(trip: t, fullAddress: true)
         else if (approaching)
@@ -698,7 +702,6 @@ class _DriverHomeState extends State<DriverHome> with WidgetsBindingObserver {
           const SizedBox(height: 8),
           TripPaymentMethodLabel(trip: t),
         ],
-        if (!invite) TripFareSummary(trip: t),
         if (error != null) ...[
           const SizedBox(height: 10),
           Text(error!, style: const TextStyle(color: Colors.red, fontSize: 12)),
@@ -709,6 +712,12 @@ class _DriverHomeState extends State<DriverHome> with WidgetsBindingObserver {
             'Mất kết nối cập nhật trực tiếp. Đang kết nối lại…',
             style: TextStyle(color: Colors.red, fontSize: 12),
           ),
+        ],
+        if (!invite) ...[
+          const SizedBox(height: 10),
+          const Divider(height: 1, color: tripBorder),
+          const SizedBox(height: 12),
+          TripFareSummary(trip: t),
         ],
         const SizedBox(height: 16),
         if (invite)
@@ -738,12 +747,13 @@ class _DriverHomeState extends State<DriverHome> with WidgetsBindingObserver {
             onTap: () => _step('pickup'),
             busy: busy,
           ),
-        if (picked)
+        if (picked) ...[
           TripAction(
             label: t.isCash ? 'Đã trả khách và thu tiền' : 'Đã trả khách',
             onTap: () => _step('dropoff'),
             busy: busy,
           ),
+        ],
       ],
     );
   }
@@ -751,7 +761,7 @@ class _DriverHomeState extends State<DriverHome> with WidgetsBindingObserver {
   Widget _history() => FutureBuilder<TripHistoryPage>(
     future: historyFuture ??= trips.history(),
     builder: (c, s) => Scaffold(
-      backgroundColor: const Color(0xFFF6FAF7),
+      backgroundColor: Colors.white,
       appBar: AppBar(
         title: const Text(
           'Chuyến đi',
@@ -779,7 +789,8 @@ class _DriverHomeState extends State<DriverHome> with WidgetsBindingObserver {
               separatorBuilder: (_, i) => const SizedBox(height: 12),
               itemBuilder: (c, i) {
                 final t = s.data!.items[i];
-                return InkWell(
+                return TripHistoryCard(
+                  trip: t,
                   onTap: () => showModalBottomSheet<void>(
                     context: c,
                     isScrollControlled: true,
@@ -819,77 +830,6 @@ class _DriverHomeState extends State<DriverHome> with WidgetsBindingObserver {
                       ),
                     ),
                   ),
-                  child: TripCard(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(
-                          '${t.createdAt.day}/${t.createdAt.month}/${t.createdAt.year} · ${t.createdAt.hour.toString().padLeft(2, '0')}:${t.createdAt.minute.toString().padLeft(2, '0')} · ${t.paymentMethodLabel}',
-                          style: const TextStyle(color: muted, fontSize: 11),
-                        ),
-                        const SizedBox(height: 10),
-                        Text(
-                          t.pickupAddress,
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                          style: const TextStyle(
-                            fontSize: 13,
-                            fontWeight: FontWeight.w600,
-                          ),
-                        ),
-                        const Padding(
-                          padding: EdgeInsets.only(left: 3),
-                          child: Icon(
-                            Icons.south_rounded,
-                            size: 17,
-                            color: green,
-                          ),
-                        ),
-                        Text(
-                          t.destinationAddress,
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                          style: const TextStyle(
-                            fontSize: 13,
-                            fontWeight: FontWeight.w600,
-                          ),
-                        ),
-                        const SizedBox(height: 12),
-                        Row(
-                          children: [
-                            Expanded(
-                              child: Text(
-                                moneyVnd(
-                                  t.agreedAmount ?? t.currentProposal?.amount,
-                                ),
-                                style: const TextStyle(
-                                  color: ink,
-                                  fontSize: 19,
-                                  fontWeight: FontWeight.w800,
-                                ),
-                              ),
-                            ),
-                            if (tripFinished(t))
-                              Flexible(
-                                child: TripPaymentBadge(
-                                  status: t.status == TripStatus.paid
-                                      ? 'Succeeded'
-                                      : t.paymentStatus,
-                                ),
-                              )
-                            else
-                              Text(
-                                t.status.label,
-                                style: const TextStyle(
-                                  fontSize: 11,
-                                  color: muted,
-                                ),
-                              ),
-                          ],
-                        ),
-                      ],
-                    ),
-                  ),
                 );
               },
             ),
@@ -910,7 +850,7 @@ class _DriverHomeState extends State<DriverHome> with WidgetsBindingObserver {
       final data = s.data is Map ? s.data as Map : const {};
       final items = data['transactions'] as List? ?? const [];
       return Scaffold(
-        backgroundColor: const Color(0xFFF6FAF7),
+        backgroundColor: Colors.white,
         appBar: AppBar(
           title: const Text(
             'Thu nhập',

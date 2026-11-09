@@ -45,6 +45,17 @@ class RiderTripPanel extends StatelessWidget {
       TripStatus.driverAccepted,
       TripStatus.enRoute,
     }.contains(s);
+    if (approaching || moving) {
+      return _ActiveRiderTrip(
+        trip: trip,
+        progress: progress,
+        route: route,
+        approaching: approaching,
+        busy: busy,
+        error: error,
+        onCancel: onCancel,
+      );
+    }
     return TripSheet(
       title: review ? 'Xác nhận tài xế và chuyến đi' : s.label,
       trailing: (review || waiting) && remaining != null
@@ -68,16 +79,6 @@ class RiderTripPanel extends StatelessWidget {
           ),
           const SizedBox(height: 16),
         ],
-        if (p != null && p.status != ProposalStatus.searching && !moving) ...[
-          TripPersonCard(
-            name: p.driverName ?? 'Tài xế SwiftRide',
-            subtitle: p.vehicleName,
-            plate: p.plateNumber,
-            avatar: p.driverAvatarImageKey,
-            vehicleType: trip.vehicleType,
-          ),
-          const SizedBox(height: 12),
-        ],
         if (approaching) ...[
           TripEta(
             text:
@@ -95,6 +96,16 @@ class RiderTripPanel extends StatelessWidget {
                 (route?.toDestination != null
                     ? '${(route!.toDestination!.durationSeconds / 60).ceil()} phút tới điểm đến'
                     : 'Đang trên đường tới điểm đến'),
+          ),
+          const SizedBox(height: 12),
+        ],
+        if (p != null && p.status != ProposalStatus.searching && !moving) ...[
+          TripPersonCard(
+            name: p.driverName ?? 'Tài xế SwiftRide',
+            subtitle: p.vehicleName,
+            plate: p.plateNumber,
+            avatar: p.driverAvatarImageKey,
+            vehicleType: trip.vehicleType,
           ),
           const SizedBox(height: 12),
         ],
@@ -126,7 +137,25 @@ class RiderTripPanel extends StatelessWidget {
           TripStopCard(label: 'Điểm đến', address: trip.destinationAddress),
         if (p?.amount != null) ...[
           const SizedBox(height: 12),
-          if (approaching || moving) TripFareSummary(trip: trip),
+          if (approaching || moving)
+            ExpansionTile(
+              tilePadding: EdgeInsets.zero,
+              leading: const Icon(Icons.receipt_long_rounded, color: green),
+              title: const Text('Chi tiết chuyến đi'),
+              children: [
+                if (moving && p != null) ...[
+                  TripPersonCard(
+                    name: p.driverName ?? 'Tài xế SwiftRide',
+                    subtitle: p.vehicleName,
+                    plate: p.plateNumber,
+                    avatar: p.driverAvatarImageKey,
+                    vehicleType: trip.vehicleType,
+                  ),
+                  const SizedBox(height: 8),
+                ],
+                TripFareSummary(trip: trip),
+              ],
+            ),
           if (!approaching && !moving) ...[
             if (review) _ReviewMetrics(trip: trip) else TripMetrics(trip: trip),
             const SizedBox(height: 8),
@@ -209,6 +238,184 @@ class RiderTripPanel extends StatelessWidget {
         ],
         if (cancel) ...[
           const SizedBox(height: 10),
+          TripAction(
+            label: 'Hủy chuyến',
+            onTap: onCancel,
+            busy: busy,
+            secondary: true,
+          ),
+        ],
+      ],
+    );
+  }
+}
+
+class _ActiveRiderTrip extends StatelessWidget {
+  const _ActiveRiderTrip({
+    required this.trip,
+    required this.approaching,
+    required this.busy,
+    required this.onCancel,
+    this.progress,
+    this.route,
+    this.error,
+  });
+
+  final TripSnapshot trip;
+  final TripProgress? progress;
+  final TripRouteSnapshot? route;
+  final bool approaching, busy;
+  final String? error;
+  final VoidCallback onCancel;
+
+  @override
+  Widget build(BuildContext context) {
+    final proposal = trip.currentProposal;
+    final eta =
+        progress?.label ??
+        (approaching
+            ? (route?.pickupEtaMinutes != null
+                  ? 'Khoảng ${route!.pickupEtaMinutes} phút tới điểm đón'
+                  : 'Đang cập nhật thời gian đến')
+            : (route?.toDestination != null
+                  ? 'Khoảng ${(route!.toDestination!.durationSeconds / 60).ceil()} phút tới điểm đến'
+                  : 'Đang cập nhật thời gian đến'));
+    return TripSheet(
+      title: approaching ? 'Tài xế đang đến' : 'Đang trên đường',
+      children: [
+        Row(
+          children: [
+            const Icon(Icons.schedule_rounded, color: green, size: 19),
+            const SizedBox(width: 8),
+            Expanded(
+              child: Text(
+                eta,
+                style: const TextStyle(
+                  color: green,
+                  fontSize: 14,
+                  fontWeight: FontWeight.w700,
+                ),
+              ),
+            ),
+          ],
+        ),
+        const SizedBox(height: 16),
+        if (proposal != null) ...[
+          Row(
+            children: [
+              const CircleAvatar(
+                radius: 22,
+                backgroundColor: tripMint,
+                child: Icon(Icons.person_rounded, color: green),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      proposal.driverName ?? 'Tài xế SwiftRide',
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(
+                        color: ink,
+                        fontWeight: FontWeight.w700,
+                        fontSize: 15,
+                      ),
+                    ),
+                    if (proposal.vehicleName?.isNotEmpty == true)
+                      Text(
+                        proposal.vehicleName!,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(color: muted, fontSize: 12),
+                      ),
+                  ],
+                ),
+              ),
+              if (proposal.plateNumber?.isNotEmpty == true)
+                Flexible(
+                  child: Text(
+                    proposal.plateNumber!,
+                    textAlign: TextAlign.end,
+                    style: const TextStyle(
+                      color: ink,
+                      fontWeight: FontWeight.w800,
+                      fontSize: 15,
+                    ),
+                  ),
+                ),
+            ],
+          ),
+          const SizedBox(height: 14),
+          const Divider(height: 1, color: tripBorder),
+          const SizedBox(height: 14),
+        ],
+        Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Icon(
+              approaching
+                  ? Icons.trip_origin_rounded
+                  : Icons.location_on_rounded,
+              color: green,
+              size: 21,
+            ),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    approaching ? 'Điểm đón' : 'Điểm đến',
+                    style: const TextStyle(color: muted, fontSize: 12),
+                  ),
+                  const SizedBox(height: 3),
+                  Text(
+                    approaching ? trip.pickupAddress : trip.destinationAddress,
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(
+                      color: ink,
+                      fontWeight: FontWeight.w600,
+                      fontSize: 13,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+        const SizedBox(height: 14),
+        const Divider(height: 1, color: tripBorder),
+        const SizedBox(height: 6),
+        Row(
+          children: [
+            const Icon(Icons.receipt_long_outlined, color: muted, size: 19),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Text(
+                moneyVnd(trip.agreedAmount ?? proposal?.amount),
+                style: const TextStyle(
+                  color: ink,
+                  fontWeight: FontWeight.w700,
+                  fontSize: 14,
+                ),
+              ),
+            ),
+            TripPaymentMethodLabel(trip: trip),
+          ],
+        ),
+        if (error != null) ...[
+          const SizedBox(height: 8),
+          Text(
+            error!,
+            key: const Key('trip-error'),
+            style: const TextStyle(color: Color(0xFFB42318), fontSize: 12),
+          ),
+        ],
+        if (approaching) ...[
+          const SizedBox(height: 12),
           TripAction(
             label: 'Hủy chuyến',
             onTap: onCancel,
@@ -348,71 +555,12 @@ class RiderTripHistory extends StatelessWidget {
               child: ListView.separated(
                 padding: const EdgeInsets.fromLTRB(16, 0, 16, 24),
                 itemCount: trips.length,
-                separatorBuilder: (_, _) => const SizedBox(height: 8),
+                separatorBuilder: (_, _) => const SizedBox(height: 12),
                 itemBuilder: (context, index) {
                   final trip = trips[index];
-                  return Card(
-                    color: const Color(0xFFF9FBF9),
-                    elevation: 0,
-                    shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(16),
-                      side: const BorderSide(color: Color(0xFFE6ECE8)),
-                    ),
-                    child: InkWell(
-                      borderRadius: BorderRadius.circular(16),
-                      onTap: () => onSelected(trip),
-                      child: Padding(
-                        padding: const EdgeInsets.all(14),
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Text(
-                              '${_formatDate(trip.createdAt)} · ${trip.paymentMethodLabel}',
-                              style: const TextStyle(
-                                color: muted,
-                                fontSize: 11,
-                              ),
-                            ),
-                            const SizedBox(height: 9),
-                            _LocationRow(
-                              icon: Icons.trip_origin_rounded,
-                              title: 'Điểm đón',
-                              address: trip.pickupAddress,
-                            ),
-                            const SizedBox(height: 7),
-                            _LocationRow(
-                              icon: Icons.place_rounded,
-                              title: 'Điểm đến',
-                              address: trip.destinationAddress,
-                            ),
-                            const Divider(height: 24),
-                            Row(
-                              children: [
-                                Text(
-                                  formatVnd(
-                                    trip.agreedAmount ??
-                                        trip.currentProposal?.amount,
-                                  ),
-                                  style: const TextStyle(
-                                    fontSize: 16,
-                                    fontWeight: FontWeight.w700,
-                                  ),
-                                ),
-                                const Spacer(),
-                                _StatusBadge(
-                                  status: trip.status,
-                                  paymentStatus: trip.paymentStatus,
-                                ),
-                                const Icon(
-                                  Icons.chevron_right_rounded,
-                                  color: muted,
-                                ),
-                              ],
-                            ),
-                          ],
-                        ),
-                      ),
-                    ),
+                  return TripHistoryCard(
+                    trip: trip,
+                    onTap: () => onSelected(trip),
                   );
                 },
               ),
@@ -479,109 +627,4 @@ class RiderTripDetailsSheet extends StatelessWidget {
       ),
     );
   }
-}
-
-class _LocationRow extends StatelessWidget {
-  const _LocationRow({
-    required this.icon,
-    required this.title,
-    required this.address,
-  });
-
-  final IconData icon;
-  final String title;
-  final String address;
-
-  @override
-  Widget build(BuildContext context) => Row(
-    crossAxisAlignment: CrossAxisAlignment.start,
-    children: [
-      Icon(icon, size: 19, color: green),
-      const SizedBox(width: 8),
-      Expanded(
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(title, style: const TextStyle(color: muted, fontSize: 11)),
-            Text(
-              address,
-              maxLines: 2,
-              overflow: TextOverflow.ellipsis,
-              style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w600),
-            ),
-          ],
-        ),
-      ),
-    ],
-  );
-}
-
-class _StatusBadge extends StatelessWidget {
-  const _StatusBadge({required this.status, this.paymentStatus});
-  final TripStatus status;
-  final String? paymentStatus;
-
-  @override
-  Widget build(BuildContext context) {
-    final (label, color, background) = switch (status) {
-      TripStatus.paid => ('Đã thanh toán', green, const Color(0xFFE5F8EE)),
-      TripStatus.cancelled => ('Đã hủy', muted, const Color(0xFFF0F2F4)),
-      TripStatus.failed => (
-        'Thất bại',
-        const Color(0xFFB3261E),
-        const Color(0xFFFFEBEE),
-      ),
-      TripStatus.paymentPending when paymentStatus == 'Failed' => (
-        'Thanh toán lỗi',
-        const Color(0xFFB42318),
-        const Color(0xFFFFEBEE),
-      ),
-      TripStatus.paymentPending => (
-        'Đang xử lý',
-        const Color(0xFFD97900),
-        const Color(0xFFFFF3E0),
-      ),
-      _ => ('Đang thực hiện', green, const Color(0xFFE5F8EE)),
-    };
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-      decoration: BoxDecoration(
-        color: background,
-        borderRadius: BorderRadius.circular(10),
-      ),
-      child: Text(
-        label,
-        style: TextStyle(
-          fontSize: 10,
-          color: color,
-          fontWeight: FontWeight.w600,
-        ),
-      ),
-    );
-  }
-}
-
-String formatVnd(double? amount) {
-  if (amount == null) return '—';
-  final rounded = amount.round().toString();
-  final grouped = rounded.replaceAllMapped(
-    RegExp(r'\B(?=(\d{3})+(?!\d))'),
-    (_) => '.',
-  );
-  return '$grouped ₫';
-}
-
-String _formatDate(DateTime date) {
-  const weekdays = [
-    'Thứ Hai',
-    'Thứ Ba',
-    'Thứ Tư',
-    'Thứ Năm',
-    'Thứ Sáu',
-    'Thứ Bảy',
-    'Chủ Nhật',
-  ];
-  final local = date.toLocal();
-  return '${weekdays[local.weekday - 1]}, ${local.day.toString().padLeft(2, '0')}/'
-      '${local.month.toString().padLeft(2, '0')}/${local.year}';
 }

@@ -7,34 +7,102 @@ import 'package:maplibre_gl/maplibre_gl.dart';
 import 'app.dart' show ink, muted;
 import 'auth.dart' show AuthFailure;
 import 'places_api.dart';
+import 'trip_models.dart';
 export 'places_api.dart' show RidePlace;
 
 const _selectionGreen = Color(0xFF00B53E);
 const _bookingAccent = Color(0xFF00A83B);
 
-// Canonical addresses/coordinates verified against Goong V2. No fake history.
-const suggestedDestinations = [
-  RidePlace(
-    'Chợ Bến Thành',
-    'Chợ Bến Thành, Bến Thành, Hồ Chí Minh',
-    LatLng(10.77253621500006, 106.69798153800008),
-    'vYi6sWSfKrJwsnANYU1CNgGU5j8SqSm_haRliJr1ze8Vko4g5hRSmxFKZVUS3F5yCZ5lnD6oXrINWgE0uhsCwh36aVSQUgZzmZKBWQoBwgOllmkUWthaQgGeyTT2IF_uA',
-  ),
-  RidePlace(
-    'Nhà thờ Đức Bà',
-    'Nhà thờ Sài Gòn, 1 Công Xã Paris, Sài Gòn, Hồ Chí Minh',
-    LatLng(10.779761528000051, 106.69907017200006),
-    'RaqIuKFMpB51unBruwyS414qXXRy6KISKb6RdaaFJbOmAzEEdv09p2GHNfB6_LLLXaWpBuI4X-9BYQl1o8xPz8nW0e3q2Svf0bKhegIjhiHhtkk0evjWYiG-6RR-XMYjI',
-  ),
-  RidePlace(
-    'Phố đi bộ Nguyễn Huệ',
-    'Phố đi bộ Nguyễn Huệ, Nguyễn Huệ, Sài Gòn, Hồ Chí Minh',
-    LatLng(10.774097806000043, 106.70363123800007),
-    'anSmTAp0irBdzlM1um7D8R-4cTuMa9WKW84kFLl5wo5HbkcuoXnhuGjOUzO9lI31HalQT7R44qxjtnK4B0POpGiUfa6C9R-yKbqpcSIp644JvkE8cvBya8W1HuDeKHcqV',
-  ),
-];
-
 const defaultPickup = RidePlace('', '');
+
+/// Ranks completed trips created in the last seven days by location frequency.
+List<RidePlace> rankRecentTripPlaces(
+  List<TripSnapshot> trips, {
+  required bool pickup,
+  required DateTime now,
+}) {
+  final cutoff = now.subtract(const Duration(days: 7));
+  final groups = <({RidePlace place, int count, DateTime latest})>[];
+  for (final trip in trips) {
+    if (!{
+          TripStatus.droppedOff,
+          TripStatus.paymentPending,
+          TripStatus.paid,
+        }.contains(trip.status) ||
+        trip.createdAt.isBefore(cutoff) ||
+        trip.createdAt.isAfter(now)) {
+      continue;
+    }
+    final address = pickup ? trip.pickupAddress : trip.destinationAddress;
+    final latitude = pickup ? trip.pickupLatitude : trip.destinationLatitude;
+    final longitude = pickup ? trip.pickupLongitude : trip.destinationLongitude;
+    if (address.trim().isEmpty ||
+        !latitude.isFinite ||
+        !longitude.isFinite ||
+        latitude.abs() > 90 ||
+        longitude.abs() > 180 ||
+        (latitude == 0 && longitude == 0)) {
+      continue;
+    }
+    final place = RidePlace(
+      address.split(',').first.trim(),
+      address,
+      LatLng(latitude, longitude),
+    );
+    if (!place.isResolved) continue;
+    final index = groups.indexWhere(
+      (group) =>
+          group.place.address.trim().toLowerCase() ==
+              address.trim().toLowerCase() ||
+          ((group.place.point!.latitude - latitude).abs() < 0.00001 &&
+              (group.place.point!.longitude - longitude).abs() < 0.00001),
+    );
+    if (index < 0) {
+      groups.add((place: place, count: 1, latest: trip.createdAt));
+    } else {
+      final group = groups[index];
+      final newer = trip.createdAt.isAfter(group.latest);
+      groups[index] = (
+        place: newer ? place : group.place,
+        count: group.count + 1,
+        latest: newer ? trip.createdAt : group.latest,
+      );
+    }
+  }
+  groups.sort((a, b) {
+    final byCount = b.count.compareTo(a.count);
+    return byCount != 0 ? byCount : b.latest.compareTo(a.latest);
+  });
+  return groups.take(3).map((group) => group.place).toList();
+}
+
+/// Merge actual trip history with live place predictions, keeping three unique places.
+List<RidePlace> suggestedPlaces(
+  List<RidePlace> recent,
+  List<RidePlace> suggestions,
+) {
+  final result = <RidePlace>[];
+  for (final place in [...recent, ...suggestions]) {
+    final address = place.address.trim().toLowerCase();
+    if (address.isEmpty ||
+        result.any(
+          (other) =>
+              other.address.trim().toLowerCase() == address ||
+              (place.placeId != null && place.placeId == other.placeId) ||
+              (place.point != null &&
+                  other.point != null &&
+                  (place.point!.latitude - other.point!.latitude).abs() <
+                      0.00001 &&
+                  (place.point!.longitude - other.point!.longitude).abs() <
+                      0.00001),
+        )) {
+      continue;
+    }
+    result.add(place);
+    if (result.length == 3) break;
+  }
+  return result;
+}
 
 class RideLocations {
   const RideLocations(
@@ -96,6 +164,8 @@ class RideLocationPicker extends StatefulWidget {
     required this.pickup,
     this.destination,
     required this.recentDestinations,
+    this.recentPickups = const [],
+    this.suggestions = const [],
     required this.vehicleType,
     required this.paymentMethod,
     this.places,
@@ -103,6 +173,8 @@ class RideLocationPicker extends StatefulWidget {
   final RidePlace pickup;
   final RidePlace? destination;
   final List<RidePlace> recentDestinations;
+  final List<RidePlace> recentPickups;
+  final List<RidePlace> suggestions;
   final RideVehicleType vehicleType;
   final RidePaymentMethod paymentMethod;
   final PlaceLookup? places;
@@ -271,8 +343,10 @@ class _RideLocationPickerState extends State<RideLocationPicker> {
 
   @override
   Widget build(BuildContext context) {
-    final recent = widget.recentDestinations;
-    final defaults = recent.isEmpty ? suggestedDestinations : recent;
+    final defaults = suggestedPlaces(
+      _searchPickup ? widget.recentPickups : widget.recentDestinations,
+      widget.suggestions,
+    );
     return ScrollConfiguration(
       behavior: ScrollConfiguration.of(context).copyWith(scrollbars: false),
       child: SafeArea(
@@ -361,10 +435,8 @@ class _RideLocationPickerState extends State<RideLocationPicker> {
                                   ? 'Kết quả điểm đón'
                                   : 'Kết quả điểm đến')
                             : _searchPickup
-                            ? 'Tìm điểm đón'
-                            : recent.isEmpty
-                            ? 'Điểm đến đề xuất'
-                            : 'Điểm đến gần đây',
+                            ? 'Điểm đón đề xuất'
+                            : 'Điểm đến đề xuất',
                         style: const TextStyle(
                           fontSize: 17,
                           fontWeight: FontWeight.w700,
@@ -430,9 +502,9 @@ class _RideLocationPickerState extends State<RideLocationPicker> {
                         else
                           for (final prediction in _predictions)
                             _predictionTile(prediction)
-                      else if (_searchPickup)
+                      else if (defaults.isEmpty)
                         const Text(
-                          'Nhập tên địa điểm hoặc địa chỉ điểm đón, rồi chọn kết quả phù hợp.',
+                          'Nhập tên địa điểm hoặc địa chỉ để tìm kiếm.',
                           style: TextStyle(color: muted),
                         )
                       else
@@ -575,7 +647,13 @@ class _RideLocationPickerState extends State<RideLocationPicker> {
           overflow: TextOverflow.ellipsis,
           style: const TextStyle(fontSize: 12, color: muted),
         ),
-        onTap: () => _savePlace(place, false),
+        onTap: () {
+          if (place.isResolved) {
+            _savePlace(place, _searchPickup);
+          } else if (place.placeId != null) {
+            _selectPrediction(PlacePrediction(place.address, place.placeId!));
+          }
+        },
       ),
     ),
   );
