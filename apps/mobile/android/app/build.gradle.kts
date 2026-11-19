@@ -36,6 +36,9 @@ android {
             signingConfig = signingConfigs.getByName("debug")
         }
     }
+    buildFeatures {
+        resValues = true
+    }
     flavorDimensions += "app"
     productFlavors {
         create("rider") {

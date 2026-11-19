@@ -15,7 +15,7 @@ public sealed class PaymentRequestedConsumer(IPaymentService payments, IPaymentS
         try
         {
             await payments.ProcessPaymentAsync(new InitiatePaymentRequest(message.TripId, message.RiderId,
-                message.DriverId, message.Amount, message.Currency, message.PaymentId), context.CancellationToken);
+                message.DriverId, message.Amount, message.Currency, message.PaymentId, message.PaymentMethod), context.CancellationToken);
         }
         catch (ApiFailure failure) when (failure.Status == 400)
         {

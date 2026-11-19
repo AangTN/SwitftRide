@@ -73,6 +73,35 @@ public sealed class LedgerService(IPaymentStore store) : ILedgerService
         if (platformFeeAmount < 0 || platformFeeAmount > payment.Amount)
             throw new ApiFailure(400, "invalid_platform_fee", "Platform fee cannot be negative or exceed total amount.");
 
+        if (payment.Method == "Cash")
+        {
+            // The driver already holds the fare. Only the platform's commission is receivable.
+            var cashTx = new LedgerTransaction
+            {
+                PaymentId = payment.Id,
+                Type = LedgerTransactionTypes.PaymentSettled,
+                IdempotencyKey = idempotencyKey,
+                CreatedAt = DateTimeOffset.UtcNow
+            };
+            if (platformFeeAmount > 0)
+            {
+                var receivable = await store.GetOrCreateAccountAsync(LedgerAccountCodes.DriverCashReceivable, payment.DriverId, payment.Currency, ct);
+                var revenue = await EnsurePlatformRevenueAccountAsync(payment.Currency, ct);
+                cashTx.Entries.Add(new LedgerEntry
+                {
+                    TransactionId = cashTx.Id, AccountId = receivable.Id,
+                    Side = EntrySide.Debit, Amount = platformFeeAmount
+                });
+                cashTx.Entries.Add(new LedgerEntry
+                {
+                    TransactionId = cashTx.Id, AccountId = revenue.Id,
+                    Side = EntrySide.Credit, Amount = platformFeeAmount
+                });
+            }
+            ValidateBalance(cashTx);
+            await store.AddLedgerTransactionAsync(cashTx, ct);
+            return cashTx;
+        }
         var riderAccount = payment.Method == "Wallet"
             ? await EnsureUserWalletAccountAsync(payment.RiderId, payment.Currency, ct)
             : await EnsureClearingAccountAsync(LedgerAccountCodes.PaymentClearing, payment.Currency, ct);
@@ -136,6 +165,7 @@ public sealed class LedgerService(IPaymentStore store) : ILedgerService
         if (payment.Amount <= 0)
             throw new ApiFailure(400, "invalid_amount", "Payment amount must be greater than zero.");
 
+        if (payment.Method == "Cash") throw new ApiFailure(400, "manual_cash_refund_required", "Cash refunds require a confirmed manual return.");
         var riderAccount = payment.Method == "Wallet"
             ? await EnsureUserWalletAccountAsync(payment.RiderId, payment.Currency, ct)
             : await EnsureClearingAccountAsync(LedgerAccountCodes.PaymentClearing, payment.Currency, ct);

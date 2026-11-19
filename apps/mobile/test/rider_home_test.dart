@@ -22,6 +22,53 @@ void main() {
     )..addFont(rootBundle.load('fonts/MaterialIcons-Regular.otf'))).load();
   });
 
+  testWidgets('pickup suggestions resolve a real place into the pickup field', (
+    tester,
+  ) async {
+    final lookup = FakePlaces();
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: RideLocationPicker(
+            pickup: defaultPickup,
+            recentDestinations: const [],
+            suggestions: const [
+              RidePlace(
+                'Đại học Sài Gòn',
+                'Gợi ý trường',
+                null,
+                'Đại học Sài Gòn',
+              ),
+            ],
+            vehicleType: RideVehicleType.motorcycle,
+            paymentMethod: RidePaymentMethod.cash,
+            places: lookup,
+          ),
+        ),
+      ),
+    );
+    await tester.tap(find.byKey(const Key('pickup-field')));
+    await tester.pumpAndSettle();
+    expect(find.text('Điểm đón đề xuất'), findsOneWidget);
+    await tester.tap(find.text('Đại học Sài Gòn'));
+    await tester.pumpAndSettle();
+    expect(lookup.detailCalls, 1);
+    expect(
+      tester
+          .widget<TextFormField>(find.byKey(const Key('pickup-field')))
+          .controller!
+          .text,
+      'Đại học Sài Gòn',
+    );
+    expect(
+      tester
+          .widget<TextFormField>(find.byKey(const Key('destination-field')))
+          .controller!
+          .text,
+      isEmpty,
+    );
+  });
+
   testWidgets(
     'phone layouts select both fields and apply vehicle/payment with no GPS',
     (tester) async {
@@ -54,6 +101,12 @@ void main() {
         await tester.tap(find.text('Bạn muốn đi đâu?'));
         await tester.pumpAndSettle();
         expect(
+          tester
+              .widget<RideLocationPicker>(find.byType(RideLocationPicker))
+              .paymentMethod,
+          RidePaymentMethod.cash,
+        );
+        expect(
           tester.widget<GoongMap>(find.byType(GoongMap)).interactive,
           isFalse,
         );
@@ -68,7 +121,7 @@ void main() {
         await tester.tap(find.text('7 chỗ'));
         await tester.ensureVisible(find.text('Ví SwiftRide'));
         await tester.tap(find.text('Ví SwiftRide'));
-        await tester.tap(find.text('Áp dụng'));
+        await tester.tap(find.text('Đặt xe'));
         await tester.pumpAndSettle();
         expect(find.byType(RideLocationPicker), findsNothing);
         expect(lookup.detailCalls, 2);
@@ -117,7 +170,7 @@ void main() {
         find.byKey(const Key('pickup-field')),
         'Địa chỉ tự nhập',
       );
-      await tester.tap(find.text('Áp dụng'));
+      await tester.tap(find.text('Đặt xe'));
       await tester.pumpAndSettle();
       expect(
         find.text('Vui lòng chọn điểm đón từ kết quả tìm kiếm.'),
@@ -131,7 +184,7 @@ void main() {
         'Địa chỉ khác',
       );
       await tester.pumpAndSettle();
-      await tester.tap(find.text('Áp dụng'));
+      await tester.tap(find.text('Đặt xe'));
       await tester.pumpAndSettle();
       expect(find.byType(RideLocationPicker), findsOneWidget);
       expect(
@@ -292,7 +345,7 @@ Future<void> openPicker(WidgetTester tester, PlaceLookup lookup) async {
           pickup: defaultPickup,
           recentDestinations: const [],
           vehicleType: RideVehicleType.motorcycle,
-          paymentMethod: RidePaymentMethod.cash,
+          paymentMethod: RidePaymentMethod.swiftRideWallet,
           places: lookup,
         ),
       ),

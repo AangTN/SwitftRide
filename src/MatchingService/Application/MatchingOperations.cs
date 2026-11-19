@@ -68,6 +68,7 @@ public sealed class PricingOptions
 
 public interface IMatchingStore
 {
+    Task<DriverAvailability?> GetDriverAsync(string driverId, CancellationToken ct);
     Task<DriverAvailability?> UpdateGpsAsync(string driverId, DriverGpsRequest gps, DateTime now, CancellationToken ct);
     Task<bool> UpdateAvailabilityAsync(
         string driverId, string vehicleType, DriverLocationUpdate update, DateTime now, CancellationToken ct);
@@ -318,7 +319,8 @@ public sealed class FareCalculator(
         var standardFare = standard.Calculate(route, pricing);
         var surgedFare = surge.Apply(standardFare, pricing);
         var promotedFare = promotion.Apply(surgedFare, pricing);
-        return decimal.Round(promotedFare, 0, MidpointRounding.AwayFromZero);
+        const decimal fareIncrement = 1000m;
+        return decimal.Ceiling(promotedFare / fareIncrement) * fareIncrement;
     }
 }
 

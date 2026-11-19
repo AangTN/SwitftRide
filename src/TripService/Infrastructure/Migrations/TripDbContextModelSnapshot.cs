@@ -100,6 +100,14 @@ namespace SwiftRide.Trip.Infrastructure.Migrations
                         .HasColumnType("nvarchar(100)")
                         .HasColumnName("payment_id");
 
+                    b.Property<string>("PaymentMethod")
+                        .IsRequired()
+                        .ValueGeneratedOnAdd()
+                        .HasMaxLength(20)
+                        .HasColumnType("nvarchar(20)")
+                        .HasDefaultValue("Wallet")
+                        .HasColumnName("payment_method");
+
                     b.Property<string>("PaymentStatus")
                         .HasMaxLength(30)
                         .HasColumnType("nvarchar(30)")
@@ -179,6 +187,11 @@ namespace SwiftRide.Trip.Infrastructure.Migrations
                         .HasColumnName("vehicle_type");
 
                     b.HasKey("Id");
+
+                    b.HasIndex("RiderId")
+                        .IsUnique()
+                        .HasDatabaseName("ux_trips_rider_in_service")
+                        .HasFilter("[status] IN ('Requested', 'Matching', 'AwaitingRiderApproval', 'AwaitingDriverResponse', 'DriverAccepted', 'EnRoute', 'PickedUp')");
 
                     b.HasIndex("DriverId", "Status");
 

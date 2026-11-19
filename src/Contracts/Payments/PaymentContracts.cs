@@ -26,7 +26,8 @@ public record PaymentDto(
     string? FailureCode,
     DateTimeOffset? PaidAt,
     DateTimeOffset CreatedAt,
-    DateTimeOffset UpdatedAt);
+    DateTimeOffset UpdatedAt,
+    string PaymentMethod = "Wallet");
 
 public record WalletBalanceDto(
     Guid UserId,
@@ -38,14 +39,21 @@ public record DriverEarningItemDto(
     Guid PaymentId,
     Guid TripId,
     decimal Amount,
-    DateTimeOffset PaidAt);
+    DateTimeOffset PaidAt,
+    string PaymentMethod = "Wallet",
+    decimal GrossAmount = 0,
+    decimal PlatformFee = 0);
 
 public record DriverEarningsDto(
     Guid DriverId,
     decimal TotalEarnings,
     int TripCount,
     string Currency,
-    IReadOnlyList<DriverEarningItemDto> Transactions);
+    IReadOnlyList<DriverEarningItemDto> Transactions,
+    decimal CashCollected = 0,
+    decimal CashNetEarnings = 0,
+    decimal NonCashEarnings = 0,
+    decimal CashCommissionDue = 0);
 
 public record PaymentSettledEvent(
     Guid PaymentId,

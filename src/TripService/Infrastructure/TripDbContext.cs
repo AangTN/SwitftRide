@@ -34,6 +34,7 @@ public sealed class TripDbContext(DbContextOptions<TripDbContext> options) : DbC
             e.Property(x => x.AgreedAmount).HasPrecision(18, 2);
             e.Property(x => x.Currency).HasMaxLength(3);
             e.Property(x => x.VehicleType).HasMaxLength(20);
+            e.Property(x => x.PaymentMethod).HasMaxLength(20).HasDefaultValue("Wallet");
             e.Property(x => x.PickupAddress).HasMaxLength(500); e.Property(x => x.DestinationAddress).HasMaxLength(500);
             e.Property(x => x.QuoteId).HasMaxLength(36);
             e.Property(x => x.DriverNameSnapshot).HasMaxLength(150); e.Property(x => x.PlateNumberSnapshot).HasMaxLength(20);
@@ -43,6 +44,8 @@ public sealed class TripDbContext(DbContextOptions<TripDbContext> options) : DbC
             e.Property(x => x.FailureReason).HasMaxLength(100);
             e.HasIndex(x => new { x.RiderId, x.CreatedAt }); e.HasIndex(x => new { x.DriverId, x.Status });
             e.HasIndex(x => new { x.RiderId, x.IdempotencyKey }).IsUnique().HasFilter("[idempotency_key] <> ''");
+            e.HasIndex(x => x.RiderId).IsUnique().HasDatabaseName("ux_trips_rider_in_service")
+                .HasFilter("[status] IN ('Requested', 'Matching', 'AwaitingRiderApproval', 'AwaitingDriverResponse', 'DriverAccepted', 'EnRoute', 'PickedUp')");
             e.HasMany(x => x.History).WithOne().HasForeignKey(x => x.TripId).OnDelete(DeleteBehavior.Restrict);
             e.HasMany(x => x.Proposals).WithOne().HasForeignKey(x => x.TripId).OnDelete(DeleteBehavior.Restrict);
         });

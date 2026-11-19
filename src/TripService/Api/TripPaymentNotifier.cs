@@ -17,7 +17,7 @@ public sealed class TripPaymentNotifier(TripDbContext db, TimeProvider clock) : 
         if (trip.PaymentId is null || trip.DriverId is null || trip.AgreedAmount is null)
             throw new InvalidOperationException("A completed trip must have payment, driver, and agreed amount snapshots.");
         TripOutboxMessage.Enqueue(db, TripMessageKind.RequestPayment, trip.Id, null,
-            new PaymentRequested(trip.PaymentId, trip.Id, trip.RiderId, trip.DriverId.Value, trip.AgreedAmount.Value, trip.Currency), clock.GetUtcNow());
+            new PaymentRequested(trip.PaymentId, trip.Id, trip.RiderId, trip.DriverId.Value, trip.AgreedAmount.Value, trip.Currency, trip.PaymentMethod), clock.GetUtcNow());
         return Task.CompletedTask;
     }
 }

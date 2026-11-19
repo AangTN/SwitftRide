@@ -13,7 +13,7 @@ Matching và Gateway, với JWT của phiên đăng nhập hiện có. GOONG_API
   khi không còn kết quả. Matching gọi Goong V2 Place Detail bằng đúng place_id.
   Căn cứ định dạng: https://help.goong.io/kb/rest-api-v2/place-detail-rest-api-v2/place-detail-place-detail-v2/
 - Các API geocode/reverse hiện có vẫn được giữ cho nhu cầu khác, nhưng luồng
-  Rider này không dùng chúng khi chọn địa điểm hoặc bấm Áp dụng.
+  Rider này không dùng chúng khi chọn địa điểm hoặc bấm Đặt xe.
 - Không có migration DB hoặc biến môi trường mới. Dùng GOONG_API_KEY đã có.
   Khi deploy qua GitHub Actions, đặt thêm repository secret `GOONG_API_KEY`.
   Workflow truyền qua SSH stdin vào `.secrets/goong-api-key` (quyền 600) trên
@@ -28,13 +28,13 @@ Matching và Gateway, với JWT của phiên đăng nhập hiện có. GOONG_API
    đầy đủ. Dữ liệu hai ô độc lập; kết quả cũ hoặc request của ô trước không ghi
    đè lựa chọn mới.
 3. App giữ nguyên địa chỉ và tọa độ từ chi tiết đã chọn; không tra địa chỉ lần
-   nữa khi bấm Áp dụng. Kiểm tra tọa độ trước khi đưa vào MapLibre để không bị
+   nữa khi bấm Đặt xe. Kiểm tra tọa độ trước khi đưa vào MapLibre để không bị
    thư viện tự clamp/wrap dữ liệu ngoài phạm vi.
 4. Sửa chữ sau khi chọn sẽ xóa lựa chọn/tọa độ cũ. Chỉ gõ chữ, chưa chọn kết quả
    có địa chỉ/tọa độ thì không áp dụng được. Những điểm gợi ý tĩnh có sẵn địa chỉ
    và tọa độ vẫn chọn được.
-5. Áp dụng trả RideLocations về home, giữ cả điểm đón và điểm đến đã xác nhận.
-   Đóng bảng trước khi áp dụng thì bỏ thay đổi nháp. Không tự tạo chuyến.
+5. Nút Đặt xe trả RideLocations đã xác nhận và tạo chuyến ngay bằng một thao tác.
+   Đóng bảng trước khi bấm Đặt xe thì bỏ thay đổi nháp. Trang chủ không có nút đặt chuyến thứ hai.
 6. `RideLocations.toTripRequest()` chuẩn bị body tạo chuyến với pickupAddress,
    pickupLatitude/Longitude, destinationAddress, destinationLatitude/Longitude,
    vehicleType. Hàm chặn dữ liệu chưa có địa chỉ/tọa độ. Người làm luồng Trip

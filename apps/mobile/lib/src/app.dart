@@ -3,7 +3,9 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'auth.dart';
 import 'rider_home.dart';
+import 'driver_home.dart';
 import 'places_api.dart';
+import 'trip_api.dart';
 
 const green = Color(0xFF00B650);
 const ink = Color(0xFF102237);
@@ -91,6 +93,32 @@ class Brand extends StatelessWidget {
         ),
       ),
     ],
+  );
+}
+
+class BrandBadge extends StatelessWidget {
+  const BrandBadge({super.key, this.size = 21});
+  final double size;
+  @override
+  Widget build(BuildContext context) => DecoratedBox(
+    decoration: BoxDecoration(
+      color: Colors.white,
+      borderRadius: BorderRadius.circular(size * .9),
+      boxShadow: [
+        BoxShadow(
+          color: Colors.black.withValues(alpha: .1),
+          blurRadius: 6,
+          offset: const Offset(0, 2),
+        ),
+      ],
+    ),
+    child: Padding(
+      padding: EdgeInsets.symmetric(
+        horizontal: size * .43,
+        vertical: size * .18,
+      ),
+      child: Brand(size: size),
+    ),
   );
 }
 
@@ -308,7 +336,7 @@ class _AuthScreenState extends State<AuthScreen> {
 
   @override
   Widget build(BuildContext context) {
-    if (!restoring && user != null && !driver) {
+    if (!restoring && user != null) {
       return Scaffold(
         backgroundColor: const Color(0xFFF0F6F2),
         body: Center(
@@ -320,11 +348,18 @@ class _AuthScreenState extends State<AuthScreen> {
                 pages: [
                   MaterialPage<void>(
                     key: const ValueKey('rider-home'),
-                    child: RiderHome(
-                      places: PlacesApi(api),
-                      fullName: user!.fullName,
-                      account: _profileContent(),
-                    ),
+                    child: driver
+                        ? DriverHome(
+                            api: api,
+                            fullName: user!.fullName,
+                            account: _profileContent(),
+                          )
+                        : RiderHome(
+                            places: PlacesApi(api),
+                            tripApi: TripApi(api),
+                            fullName: user!.fullName,
+                            account: _profileContent(),
+                          ),
                   ),
                 ],
                 onDidRemovePage: (_) {},
