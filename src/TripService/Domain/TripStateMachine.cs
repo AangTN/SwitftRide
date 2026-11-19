@@ -11,6 +11,7 @@ public static class TripStateMachine
         [TripStatus.AwaitingDriverResponse] = new(TripStatus.Matching, TripStatus.DriverAccepted, TripStatus.Cancelled, TripStatus.Failed),
         [TripStatus.DriverAccepted] = new(TripStatus.EnRoute, TripStatus.Cancelled),
         [TripStatus.EnRoute] = new(TripStatus.PickedUp, TripStatus.Cancelled),
+        //Muốn xác nhận đã trả khách thì trước đó chuyến phải ghi nhận đã đón khách.
         [TripStatus.PickedUp] = new(TripStatus.DroppedOff),
         [TripStatus.DroppedOff] = new(TripStatus.PaymentPending),
         [TripStatus.PaymentPending] = new(TripStatus.Paid),
