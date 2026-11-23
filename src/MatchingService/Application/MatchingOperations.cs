@@ -98,7 +98,7 @@ public interface IGoongClient
     Task<IReadOnlyList<PlaceSuggestion>> SearchPlacesAsync(string input, CancellationToken ct);
     Task<PlaceDetails?> GetPlaceDetailsAsync(string placeId, CancellationToken ct);
 }
-//Class Tìm và giữ tài xế
+
 public sealed class MatchingCoordinator(
     IMatchingStore store,
     IDriverProfileReader profiles,
@@ -140,7 +140,6 @@ public sealed class MatchingCoordinator(
         var candidates = await store.FindNearbyAvailableDriversAsync(
             pickup, vehicleType, now.AddSeconds(-matching.LocationMaxAgeSeconds),
             matching.MaxSearchDistanceMeters, matching.MaxCandidates, now, excludedDriverIds, ct);
-        // Duyệt qua từng tài xế để giữ tài xế
         foreach (var candidate in candidates)
         {
             var candidateLocation = candidate.Location;
