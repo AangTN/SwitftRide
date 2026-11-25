@@ -2,7 +2,7 @@
 
 SwiftRide là đồ án đặt xe với hai ứng dụng Flutter cho hành khách và tài xế. Backend dùng .NET 10 và C# 14, nhận yêu cầu qua YARP Gateway và trao đổi thông điệp nghiệp vụ qua RabbitMQ/MassTransit.
 
-- [Báo cáo đồ án](docs/bao-cao/Bao_cao_SwiftRide.docx)
+- [Báo cáo đồ án](B%C3%A1o%20c%C3%A1o/Bao_cao_SwiftRide.docx)
 - [Hướng dẫn Flutter và Android](apps/mobile/DEVELOPMENT.md)
 - [Hướng dẫn triển khai demo VPS](docs/deployment.md)
 
@@ -108,7 +108,7 @@ flutter analyze
 flutter test
 ```
 
-[Báo cáo đồ án](docs/bao-cao/Bao_cao_SwiftRide.docx) ghi kết quả của phiên bản được kiểm thử tại commit `a49fac4`, gồm **152 ca xUnit** và **52 ca HTTP**.
+[Báo cáo đồ án](B%C3%A1o%20c%C3%A1o/Bao_cao_SwiftRide.docx) ghi kết quả của phiên bản được kiểm thử tại commit `a49fac4`, gồm **152 ca xUnit** và **52 ca HTTP**.
 
 ## CI/CD
 
